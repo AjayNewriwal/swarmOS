@@ -4,6 +4,8 @@ import type { Caps, CreateRunInput } from "../types";
 interface Props {
   caps: Caps;
   openaiConfigured: boolean;
+  defaultPolicy: string;
+  escalationAvailable: boolean;
   busy: boolean;
   onSubmit: (input: CreateRunInput) => Promise<void>;
 }
@@ -13,9 +15,17 @@ const EXAMPLES = [
   "Fix the failing test in target.py and document the change",
 ];
 
-export function RunForm({ caps, openaiConfigured, busy, onSubmit }: Props) {
+export function RunForm({
+  caps,
+  openaiConfigured,
+  defaultPolicy,
+  escalationAvailable,
+  busy,
+  onSubmit,
+}: Props) {
   const [goal, setGoal] = useState(EXAMPLES[0]);
   const [provider, setProvider] = useState<"auto" | "demo" | "openai">("auto");
+  const [modelPolicy, setModelPolicy] = useState(defaultPolicy || "config");
   const [budget, setBudget] = useState(Math.min(0.25, caps.max_budget_usd));
   const [calls, setCalls] = useState(Math.min(12, caps.max_agent_calls));
   const [retries, setRetries] = useState(Math.min(2, caps.max_retries));
@@ -34,6 +44,7 @@ export function RunForm({ caps, openaiConfigured, busy, onSubmit }: Props) {
         void onSubmit({
           goal: goal.trim(),
           provider,
+          model_policy: modelPolicy as CreateRunInput["model_policy"],
           limits: {
             max_budget_usd: budget,
             max_agent_calls: calls,
@@ -94,6 +105,21 @@ export function RunForm({ caps, openaiConfigured, busy, onSubmit }: Props) {
           />
         </label>
       </div>
+
+      <label className="field compact">
+        <span>Model policy</span>
+        <select
+          value={modelPolicy}
+          onChange={(event) => setModelPolicy(event.target.value)}
+        >
+          <option value="config">configured role routing</option>
+          <option value="fast_only">fast only (no escalation)</option>
+          <option value="adaptive">adaptive (fast, then escalate)</option>
+          <option value="role_routed" disabled={!escalationAvailable}>
+            role-routed (needs a strong model)
+          </option>
+        </select>
+      </label>
 
       <button
         type="button"

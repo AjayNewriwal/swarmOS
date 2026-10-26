@@ -43,6 +43,7 @@ from app.models import (
     TraceEvent,
     utc_now,
 )
+from app.providers.base import ModelUnavailableError
 from app.runtime.limits import LimitExceeded
 from app.runtime.runtime import RunRuntime
 from app.runtime.workspace import Workspace
@@ -116,17 +117,23 @@ class Orchestrator:
         workspace = final.get("workspace", {}) or {}
         artifacts = {path: workspace[path] for path in touched if path in workspace}
 
+        invocations = final.get("agent_invocations", []) or []
         updated = record.model_copy(
             update={
                 "status": final.get("status", "failed"),
                 "provider": self.runtime.provider_name,
+                "provider_kind": self._provider_kind(),
                 "provider_warning": self.runtime.provider_warning,
+                "model_policy": self.runtime.model_policy,
+                "models_by_role": self._models_by_role(),
                 "plan": final.get("plan"),
                 "review": final.get("review"),
                 "verification": final.get("verification"),
                 "summary": final.get("summary", "") or self._summary(final),
                 "error": final.get("error"),
                 "cost_usd": round(self.runtime.ledger.spent_usd, 8),
+                "monetary_enforced": self.runtime.settings.monetary_enforced,
+                "usage_available": any(item.usage_available for item in invocations),
                 "agent_calls": self.runtime.ledger.calls,
                 "escalations": int(final.get("escalations", 0) or 0),
                 "revisions": int(final.get("revisions", 0) or 0),
@@ -137,6 +144,17 @@ class Orchestrator:
             }
         )
         return RunResult(record=updated, events=list(self.runtime.trace.events), state=final)
+
+    def _provider_kind(self) -> str:
+        return self.runtime.settings.provider_kind
+
+    def _models_by_role(self) -> dict[str, str]:
+        models = {
+            role: self.runtime.selection_for_role(role).model
+            for role in ("planner", "coder", "reviewer")
+        }
+        models["verifier"] = "deterministic-subprocess"
+        return models
 
     # ------------------------------------------------------------------
     # graph wiring
@@ -199,6 +217,8 @@ class Orchestrator:
             )
         except LimitExceeded as exc:
             return {"status": exc.status, "error": str(exc), "stage": "done"}
+        except ModelUnavailableError as exc:
+            return {"status": "failed", "error": str(exc), "stage": "done"}
 
         updates: dict = self._call_updates(result)
         if result.output is None:
@@ -462,13 +482,32 @@ class Orchestrator:
         }
 
     async def _escalate(self, state: SwarmState) -> dict:
+        if not self.runtime.escalation_available:
+            # Defensive: routing already refuses this, but a silent downgrade to
+            # the fast model would misrepresent what happened.
+            message = (
+                "Escalation is impossible: no distinct strong model is configured. "
+                "Set OPENAI_COMPAT_MODEL_STRONG to a different model id."
+            )
+            self.runtime.emit(
+                "escalation",
+                "Escalation unavailable",
+                from_tier=state.get("model_tier", "fast"),
+                to_tier=None,
+                available=False,
+                reason=message,
+            )
+            return {"status": "failed", "error": message, "stage": "done"}
+
         escalations = int(state.get("escalations", 0) or 0) + 1
         self.runtime.emit(
             "escalation",
             f"Escalating to the strong model (round {escalations})",
             from_tier=state.get("model_tier", "fast"),
             to_tier="strong",
+            available=True,
             round=escalations,
+            model=self.runtime.selection_for_tier("strong").model,
             unresolved=list(
                 dict.fromkeys(f.step_id for f in self._unresolved_failures(state))
             ),
@@ -711,6 +750,7 @@ class Orchestrator:
     def _can_escalate(self, state: SwarmState) -> bool:
         return (
             state.get("model_tier", "fast") == "fast"
+            and self.runtime.escalation_available
             and int(state.get("escalations", 0) or 0) < self.runtime.limits.max_escalations
         )
 
@@ -857,9 +897,36 @@ class Orchestrator:
             )
         if error:
             lines.append(f"Error: {error}")
+        if unresolved and not self.runtime.escalation_available:
+            lines.append(
+                "Escalation: unavailable - no distinct strong model is configured "
+                "(OPENAI_COMPAT_MODEL_STRONG)"
+            )
         lines.append(
-            f"Cost: ${self.runtime.ledger.spent_usd:.6f}; "
+            f"Provider: {self.runtime.provider_name}; policy: {self.runtime.model_policy}"
+        )
+        lines.append(
+            "Models: "
+            + ", ".join(
+                f"{role}={model}" for role, model in self._models_by_role().items()
+            )
+        )
+        if self.runtime.settings.monetary_enforced:
+            lines.append(
+                f"Monetary budget: enforced at ${self.runtime.limits.max_budget_usd:.4f} "
+                "(token rates configured; reservations settle after each call, so a "
+                "single call may exceed the cap by its actual cost)"
+            )
+        else:
+            lines.append(
+                "Monetary budget: NOT enforced - token pricing is unknown or the "
+                "provider is the demo fixture. Call, time, retry, and revision "
+                "limits are the effective controls."
+            )
+        lines.append(
+            f"Cost estimate: ${self.runtime.ledger.spent_usd:.6f}; "
             f"calls: {self.runtime.ledger.calls}; "
+            f"usage metadata: {'available' if any(i.usage_available for i in (state.get('agent_invocations') or [])) else 'unavailable'}; "
             f"escalations: {int(state.get('escalations', 0) or 0)}; "
             f"revisions: {int(state.get('revisions', 0) or 0)}"
         )

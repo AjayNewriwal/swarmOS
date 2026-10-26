@@ -30,8 +30,45 @@ def test_health_reports_provider_mode(client):
 def test_config_exposes_caps_and_sample_files(client):
     body = client.get("/api/config").json()
     assert body["caps"]["max_agent_calls"] > 0
-    assert body["verification_command"]
+    assert body["verification"]["command"]
+    assert body["verification"]["execution_enabled"] is True
     assert "target.py" in body["sample_files"]
+    assert body["provider_kind"] in {"demo", "local", "remote"}
+    assert body["demo_fixture"] is True
+    assert body["role_routing"] == {
+        "planner": "fast",
+        "coder": "fast",
+        "reviewer": "fast",
+    }
+    assert body["monetary_enforced"] is False
+    assert body["api"]["auth_required"] is False
+
+
+def test_provider_models_reports_demo_without_calling_out(client):
+    body = client.get("/api/provider/models").json()
+    assert body["kind"] == "demo"
+    assert body["ok"] is True
+    assert body["models"] == []
+
+
+def test_api_token_is_required_when_configured(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    guarded = replace(make_settings(tmp_path, provider="demo"), api_token="test-token")
+    monkeypatch.setattr(main_module, "settings", guarded)
+    with TestClient(main_module.app) as guarded_client:
+        assert guarded_client.get("/health").status_code == 200
+        assert guarded_client.get("/api/config").status_code == 401
+        assert (
+            guarded_client.get(
+                "/api/config", headers={"Authorization": "Bearer wrong"}
+            ).status_code
+            == 401
+        )
+        ok = guarded_client.get(
+            "/api/config", headers={"Authorization": "Bearer test-token"}
+        )
+        assert ok.status_code == 200
 
 
 def test_inline_run_completes_and_returns_trace(client):

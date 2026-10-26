@@ -47,6 +47,7 @@ yarn-error.log*
 .coverage.*
 coverage.xml
 htmlcov/
+benchmarks/results/
 
 # Logs and OS/editor files
 *.log

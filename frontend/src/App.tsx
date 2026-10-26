@@ -113,10 +113,16 @@ export default function App() {
 
         <div className="provider-line">
           <span className={`provider ${config?.demo_fixture ? "demo" : "live"}`}>
-            {config ? (config.demo_fixture ? "demo fixture" : "openai-compatible") : "…"}
+            {config
+              ? config.provider_kind === "demo"
+                ? "demo fixture"
+                : config.provider_kind === "local"
+                  ? "local inference"
+                  : "remote endpoint"
+              : "…"}
           </span>
           {config && (
-            <span className="muted mono small">{config.verification_command}</span>
+            <span className="muted mono small">{config.verification.command}</span>
           )}
         </div>
 
@@ -124,6 +130,8 @@ export default function App() {
           <RunForm
             caps={config.caps}
             openaiConfigured={config.openai_configured}
+            defaultPolicy={config.model_policy}
+            escalationAvailable={config.escalation_available}
             busy={busy}
             onSubmit={submit}
           />

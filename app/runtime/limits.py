@@ -37,6 +37,7 @@ class BudgetLedger:
     max_calls: int
     max_wall_seconds: int
     reservation_usd: float
+    monetary_enforced: bool = False
     started_monotonic: float = field(default_factory=time.monotonic)
     spent_usd: float = 0.0
     reserved_usd: float = 0.0
@@ -97,6 +98,7 @@ class BudgetLedger:
             "max_calls": self.max_calls,
             "calls": self.calls,
             "denied": self.denied,
+            "monetary_enforced": self.monetary_enforced,
             "elapsed_seconds": round(self.elapsed_seconds, 3),
             "remaining_seconds": round(
                 max(0.0, self.deadline_monotonic - time.monotonic()), 3

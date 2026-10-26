@@ -118,3 +118,45 @@ def test_file_change_roundtrip_in_trace_payload(tmp_path):
         assert payload["change"]["step_id"] == "alpha"
     finally:
         store.close()
+def test_old_database_is_migrated_with_defaults(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "old.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE runs (
+            run_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            goal TEXT NOT NULL, provider TEXT NOT NULL, provider_warning TEXT,
+            status TEXT NOT NULL, limits_json TEXT NOT NULL, plan_json TEXT,
+            review_json TEXT, verification_json TEXT, summary TEXT NOT NULL DEFAULT '',
+            error TEXT, cost_usd REAL NOT NULL DEFAULT 0,
+            agent_calls INTEGER NOT NULL DEFAULT 0, escalations INTEGER NOT NULL DEFAULT 0,
+            revisions INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0,
+            changed_files_json TEXT NOT NULL DEFAULT '[]',
+            artifacts_json TEXT NOT NULL DEFAULT '{}'
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO runs (run_id, created_at, updated_at, goal, provider, status, limits_json)"
+        " VALUES ('run_old','2026-01-01','2026-01-01','old goal','demo','completed','{}')"
+    )
+    conn.commit()
+    conn.close()
+
+    store = RunStore(db)
+    try:
+        record = store.get_run("run_old")
+        assert record is not None
+        assert record.provider_kind == "unknown"
+        assert record.model_policy == "config"
+        assert record.models_by_role == {}
+        assert record.monetary_enforced is False
+        assert record.usage_available is False
+
+        # New writes still work after migration.
+        store.save_run(record.model_copy(update={"provider_kind": "local"}))
+        assert store.get_run("run_old").provider_kind == "local"
+    finally:
+        store.close()

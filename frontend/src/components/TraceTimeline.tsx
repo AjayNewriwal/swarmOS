@@ -11,6 +11,8 @@ const KIND_LABELS: Record<string, string> = {
   escalation: "escalation",
   revision: "revision",
   budget: "budget",
+  provider: "provider",
+  repair: "structured-output repair",
   run_finished: "run finished",
 };
 
@@ -22,7 +24,7 @@ const FILTERS = [
   { id: "issues", label: "Issues" },
 ];
 
-const ISSUE_KINDS = new Set(["failure", "budget", "escalation", "retry"]);
+const ISSUE_KINDS = new Set(["failure", "budget", "escalation", "retry", "provider"]);
 
 function clock(value: string): string {
   const date = new Date(value);
@@ -46,13 +48,22 @@ function Summary({ event }: { event: TraceEvent }) {
         <div className="chips">
           <span className="chip-static">{payload.role}</span>
           <span className="chip-static mono">{payload.model}</span>
-          <span className="chip-static">{payload.tier}</span>
+          <span className="chip-static">{payload.profile ?? payload.tier}</span>
           <span className="chip-static">attempt {payload.attempt}</span>
           <span className="chip-static">{payload.latency_ms} ms</span>
           <span className="chip-static">
             {(payload.input_tokens ?? 0) + (payload.output_tokens ?? 0)} tok
           </span>
+          <span className={`chip-static ${payload.usage_available ? "ok" : ""}`}>
+            {payload.usage_available ? "usage reported" : "usage unknown"}
+          </span>
           <span className="chip-static">${Number(payload.cost_usd ?? 0).toFixed(6)}</span>
+          {payload.structured_mode ? (
+            <span className="chip-static mono">{payload.structured_mode}</span>
+          ) : null}
+          {payload.error_class ? (
+            <span className="chip-static danger">{payload.error_class}</span>
+          ) : null}
           {payload.error ? (
             <span className="chip-static danger">{String(payload.error).slice(0, 90)}</span>
           ) : null}
@@ -98,9 +109,23 @@ function Summary({ event }: { event: TraceEvent }) {
       return (
         <div className="chips">
           <span className="chip-static accent">
-            {String(payload.from_tier)} → {String(payload.to_tier)}
+            {payload.available === false
+              ? "escalation unavailable"
+              : `${String(payload.from_tier)} → ${String(payload.to_tier)}`}
           </span>
           <span className="chip-static">round {String(payload.round)}</span>
+        </div>
+      );
+    case "provider":
+      return (
+        <div className="chips">
+          <span className="chip-static danger">{String(payload.category)}</span>
+          <span className="chip-static">
+            {payload.retryable ? "retryable" : "not retryable"}
+          </span>
+          {payload.error ? (
+            <span className="chip-static">{String(payload.error).slice(0, 120)}</span>
+          ) : null}
         </div>
       );
     default:

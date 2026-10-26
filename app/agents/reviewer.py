@@ -41,7 +41,9 @@ class ReviewAgent(Agent[ReviewInput, ReviewOutput]):
     output_model = ReviewOutput
     system = SYSTEM
 
-    def build_request(self, payload: ReviewInput, model: str) -> ModelRequest:
+    def build_request(
+        self, payload: ReviewInput, model: str, repair_note: str | None = None
+    ) -> ModelRequest:
         data = payload.model_dump(mode="json")
         files: dict[str, str] = data.get("files") or {}
         rendered = {
@@ -52,6 +54,11 @@ class ReviewAgent(Agent[ReviewInput, ReviewOutput]):
         }
         data["files"] = rendered
         data["note"] = "files is the complete workspace snapshot after the changes were applied."
+        if repair_note:
+            data["_output_repair"] = (
+                "Your previous reply could not be parsed. Return only the JSON "
+                f"object described by the system prompt. Parser error: {repair_note}"
+            )
         return ModelRequest(
             role=self.role,
             system=self.system,

@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import hmac
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
 from app.config import settings
 from app.models import RunDetail, RunRequest
-from app.providers.base import ProviderConfigError
+from app.providers import resolve_provider
+from app.providers.base import ProbeableProvider, ProviderConfigError, ProviderError
 from app.service import RunService
 from app.store import RunStore
 
@@ -47,6 +50,26 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def require_token(request: Request, call_next):
+    """Optional bearer auth for the API.
+
+    Execution endpoints can run code, so when SWARMOS_API_TOKEN is set every
+    /api route requires it. /health stays open for liveness checks.
+    """
+    token = settings.api_token
+    if token and request.method != "OPTIONS" and request.url.path.startswith("/api"):
+        supplied = request.headers.get("authorization", "")
+        expected = f"Bearer {token}"
+        if not hmac.compare_digest(supplied, expected):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "missing or invalid API token"},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    return await call_next(request)
+
+
 def _service() -> RunService:
     return app.state.service
 
@@ -69,7 +92,9 @@ async def health() -> dict:
         "service": "swarmos",
         "version": __version__,
         "provider_mode": settings.provider,
+        "provider_kind": settings.provider_kind,
         "openai_configured": settings.openai_configured,
+        "auth_required": bool(settings.api_token),
     }
 
 
@@ -83,8 +108,7 @@ async def config() -> dict:
             if path.is_file() and "__pycache__" not in path.parts
         )
     return {
-        "provider_mode": settings.provider,
-        "openai_configured": settings.openai_configured,
+        **settings.describe(),
         "caps": {
             "max_agent_calls": settings.max_agent_calls,
             "max_budget_usd": settings.max_budget_usd,
@@ -93,10 +117,40 @@ async def config() -> dict:
             "max_revisions": settings.max_revisions,
             "max_escalations": settings.max_escalations,
         },
-        "verification_command": settings.verification_command,
+        "verification": {
+            "command": settings.verification_command,
+            "timeout_seconds": settings.verification_timeout_seconds,
+            "execution_enabled": settings.execution_enabled,
+            "allowed_commands": sorted(settings.allowed_command_set),
+            "repo_checkout_allowed": settings.allow_repo_checkout,
+        },
+        "api": {
+            "auth_required": bool(settings.api_token),
+            "remote_bind_allowed": settings.allow_remote_bind,
+        },
         "sample_files": sample_files,
         "demo_fixture": not settings.openai_configured,
     }
+
+
+@app.get("/api/provider/models")
+async def provider_models() -> dict:
+    """List models from the configured endpoint. No inference, no cost."""
+    provider, name, warning = resolve_provider("auto", settings)
+    if not isinstance(provider, ProbeableProvider):
+        return {
+            "provider": name,
+            "kind": "demo",
+            "ok": True,
+            "detail": "demo fixture; no endpoint to probe",
+            "models": [],
+            "warning": warning,
+        }
+    try:
+        result = await provider.health()
+    except ProviderError as exc:
+        return {"provider": name, "ok": False, "detail": str(exc), "models": []}
+    return {"provider": name, "kind": settings.provider_kind, **result}
 
 
 @app.post("/api/runs", status_code=202)

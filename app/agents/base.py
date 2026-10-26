@@ -52,16 +52,26 @@ class Agent(Generic[InputT, OutputT]):
     output_model: type[OutputT]
     system: str
 
-    def build_request(self, payload: InputT, model: str) -> ModelRequest:
+    def build_request(
+        self, payload: InputT, model: str, repair_note: str | None = None
+    ) -> ModelRequest:
         if not isinstance(payload, self.input_model):
             raise AgentError(
                 f"{type(self).__name__} expected {self.input_model.__name__}, "
                 f"got {type(payload).__name__}"
             )
+        data = payload.model_dump(mode="json")
+        if repair_note:
+            # A previous attempt produced unparseable output. Tell the model
+            # exactly what was wrong instead of resending an identical prompt.
+            data["_output_repair"] = (
+                "Your previous reply could not be parsed. Return only the JSON "
+                f"object described by the system prompt. Parser error: {repair_note}"
+            )
         return ModelRequest(
             role=self.role,
             system=self.system,
-            user=json.dumps(payload.model_dump(mode="json"), indent=2),
+            user=json.dumps(data, indent=2),
             model=model,
             json_mode=True,
         )

@@ -58,6 +58,7 @@ class RunRequest(BaseModel):
     files: dict[str, str] = Field(default_factory=dict)
     limits: Limits = Field(default_factory=Limits)
     provider: Literal["auto", "demo", "openai"] = "auto"
+    model_policy: Literal["config", "fast_only", "adaptive", "role_routed"] | None = None
     metadata: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("files")
@@ -259,6 +260,7 @@ class AgentInvocation(BaseModel):
     step_id: str | None = None
     provider: str
     model: str
+    profile: str = "fast"
     model_tier: ModelTier = "fast"
     attempt: int = 1
     status: Literal["succeeded", "failed", "skipped"] = "succeeded"
@@ -267,8 +269,11 @@ class AgentInvocation(BaseModel):
     latency_ms: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    usage_available: bool = False
+    structured_mode: str | None = None
     cost_usd: float = 0.0
     error: str | None = None
+    error_class: str | None = None
 
 
 TraceKind = Literal[
@@ -281,6 +286,8 @@ TraceKind = Literal[
     "escalation",
     "revision",
     "budget",
+    "provider",
+    "repair",
     "run_finished",
 ]
 
@@ -301,15 +308,20 @@ class RunRecord(BaseModel):
     updated_at: str = Field(default_factory=utc_now)
     goal: str
     provider: str = "demo"
+    provider_kind: Literal["demo", "local", "remote", "unknown"] = "demo"
     provider_warning: str | None = None
     status: RunStatus = "queued"
     limits: Limits = Field(default_factory=Limits)
+    model_policy: str = "config"
+    models_by_role: dict[str, str] = Field(default_factory=dict)
     plan: Plan | None = None
     review: ReviewOutput | None = None
     verification: VerificationResult | None = None
     summary: str = ""
     error: str | None = None
     cost_usd: float = 0.0
+    monetary_enforced: bool = False
+    usage_available: bool = False
     agent_calls: int = 0
     escalations: int = 0
     revisions: int = 0

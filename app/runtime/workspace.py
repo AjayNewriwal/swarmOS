@@ -14,6 +14,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -31,6 +32,12 @@ _SKIP_DIRS = {
     ".mypy_cache",
     ".ruff_cache",
 }
+
+# Never copy these into a run workspace when mirroring a real repository.
+_SENSITIVE = re.compile(
+    r"^(\.env($|\..*)|.*\.(pem|key|p12|pfx|jks|db|sqlite3?)|id_rsa.*|credentials\.(json|ya?ml)|secrets\.(json|ya?ml))$",
+    re.IGNORECASE,
+)
 
 # Only these variables reach code executed by the verification runner, so model
 # credentials from the parent process cannot leak into test code.
@@ -59,9 +66,20 @@ class WorkspaceError(RuntimeError):
 
 
 class Workspace:
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        char_limit: int = 400_000,
+        execution_enabled: bool = True,
+        allowed_commands: set[str] | None = None,
+    ) -> None:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
+        self.char_limit = char_limit
+        self.execution_enabled = execution_enabled
+        self.allowed_commands = allowed_commands or {"python", "python3", "py", "pytest"}
+        self.last_truncated = False
 
     # -- creation ---------------------------------------------------------
     @classmethod
@@ -71,10 +89,11 @@ class Workspace:
 
     @classmethod
     def from_directory(cls, source: Path, destination: Path) -> Workspace:
+        """Mirror a directory (used for the bundled sample project)."""
         destination.mkdir(parents=True, exist_ok=True)
         if source.is_dir():
             for path in source.rglob("*"):
-                if not path.is_file():
+                if not path.is_file() or path.is_symlink():
                     continue
                 relative = path.relative_to(source)
                 if any(part in _SKIP_DIRS for part in relative.parts):
@@ -82,6 +101,38 @@ class Workspace:
                 target = destination / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(path, target)
+        return cls(destination)
+
+    @classmethod
+    def from_repository(
+        cls, source: Path, destination: Path, *, allow: bool = False
+    ) -> Workspace:
+        """Mirror a real repository checkout.
+
+        Disabled by default. This is a copy for the orchestrator to edit, not a
+        live checkout: there is no git history, no branch, and no push. Secrets
+        and databases are skipped, and symlinks are not followed.
+        """
+        if not allow:
+            raise WorkspaceError(
+                "repository checkout is disabled. Set SWARMOS_ALLOW_REPO_CHECKOUT=1 "
+                "to copy a repository into a run workspace. There is no tested "
+                "live-repository workflow yet."
+            )
+        if not source.is_dir():
+            raise WorkspaceError(f"not a directory: {source}")
+        destination.mkdir(parents=True, exist_ok=True)
+        for path in source.rglob("*"):
+            if not path.is_file() or path.is_symlink():
+                continue
+            relative = path.relative_to(source)
+            if any(part in _SKIP_DIRS for part in relative.parts):
+                continue
+            if _SENSITIVE.match(relative.name):
+                continue
+            target = destination / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
         return cls(destination)
 
     # -- paths ------------------------------------------------------------
@@ -125,11 +176,14 @@ class Workspace:
                 self.write(change.path, change.content)
         return changes
 
-    def snapshot(self, limit_bytes: int = 400_000) -> dict[str, str]:
+    def snapshot(self, limit_bytes: int | None = None) -> dict[str, str]:
+        limit = self.char_limit if limit_bytes is None else limit_bytes
         files: dict[str, str] = {}
         total = 0
+        self.last_truncated = False
         for path in sorted(self.root.rglob("*")):
-            if not path.is_file():
+            # Never read through a symlink: it can point outside the workspace.
+            if not path.is_file() or path.is_symlink():
                 continue
             relative = path.relative_to(self.root)
             if any(part in _SKIP_DIRS for part in relative.parts):
@@ -139,7 +193,8 @@ class Workspace:
             except (UnicodeDecodeError, OSError):
                 continue
             total += len(content)
-            if total > limit_bytes:
+            if total > limit:
+                self.last_truncated = True
                 break
             files[relative.as_posix()] = content
         return files
@@ -155,7 +210,12 @@ class Workspace:
             target = destination / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8", newline="\n")
-        return Workspace(destination)
+        return Workspace(
+            destination,
+            char_limit=self.char_limit,
+            execution_enabled=self.execution_enabled,
+            allowed_commands=set(self.allowed_commands),
+        )
 
     def destroy(self) -> None:
         shutil.rmtree(self.root.parent, ignore_errors=True)
@@ -164,39 +224,69 @@ class Workspace:
     def run_command(self, command: str, timeout_seconds: int) -> VerificationResult:
         argv = shlex.split(command, posix=False)
         if not argv:
-            raise WorkspaceError("verification command is empty")
+            return self._execution_failure(command, "verification command is empty")
+        if not self.execution_enabled:
+            return self._execution_failure(
+                command,
+                "execution is disabled (SWARMOS_EXECUTION_ENABLED=0)",
+            )
         if argv[0].lower() in {"python", "python3", "py"}:
             argv[0] = sys.executable
+        binary = Path(argv[0]).name.lower()
+        if binary.endswith(".exe"):
+            binary = binary[: -len(".exe")]
+        if binary not in self.allowed_commands:
+            return self._execution_failure(
+                command,
+                f"command {binary!r} is not in SWARMOS_ALLOWED_COMMANDS "
+                f"({', '.join(sorted(self.allowed_commands))})",
+            )
+
         env = self._safe_env()
         started = time.perf_counter()
+        timed_out = False
         try:
-            completed = subprocess.run(  # noqa: S603 - explicit, allow-listed env
+            process = subprocess.Popen(  # noqa: S603 - explicit argv, allow-listed binary
                 argv,
                 cwd=str(self.root),
                 env=env,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=timeout_seconds,
-                check=False,
+                start_new_session=os.name != "nt",
+                creationflags=(
+                    subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+                ),
             )
-            exit_code = completed.returncode
-            stdout, stderr = completed.stdout, completed.stderr
-        except subprocess.TimeoutExpired as exc:
-            exit_code = 124
-            stdout = _decode(exc.stdout)
-            stderr = f"verification timed out after {timeout_seconds}s"
         except OSError as exc:
-            exit_code = 127
-            stdout = ""
-            stderr = f"could not start verification command: {exc}"
-        duration_ms = int((time.perf_counter() - started) * 1000)
+            return self._execution_failure(
+                command, f"could not start verification command: {exc}"
+            )
 
+        try:
+            stdout, stderr = process.communicate(timeout=timeout_seconds)
+            exit_code = process.returncode
+        except subprocess.TimeoutExpired:
+            # Kill the whole tree, not just the direct child, so a spawned
+            # pytest worker cannot keep running after the timeout.
+            self._kill_tree(process)
+            stdout, stderr = process.communicate()
+            exit_code = 124
+            timed_out = True
+            stderr = (stderr or "") + f"\nverification timed out after {timeout_seconds}s"
+
+        duration_ms = int((time.perf_counter() - started) * 1000)
         passed_count = _count(_PASSED, stdout)
         failed_count = _count(_FAILED, stdout)
         error_count = _count(_ERRORS, stdout)
-        passed = exit_code == 0 and passed_count > 0 and failed_count == 0
+        passed = (
+            not timed_out
+            and exit_code == 0
+            and passed_count > 0
+            and failed_count == 0
+        )
 
         return VerificationResult(
             passed=passed,
@@ -210,6 +300,37 @@ class Workspace:
             workspace_files=self.file_list(),
         )
 
+    def _execution_failure(self, command: str, message: str) -> VerificationResult:
+        return VerificationResult(
+            passed=False,
+            command=command,
+            exit_code=126,
+            duration_ms=0,
+            stdout_tail="",
+            stderr_tail=message,
+            workspace_files=self.file_list(),
+        )
+
+    @staticmethod
+    def _kill_tree(process: subprocess.Popen) -> None:
+        if process.poll() is not None:
+            return
+        if os.name == "nt":
+            subprocess.run(  # noqa: S603,S607 - fixed system binary and integer pid
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                capture_output=True,
+                check=False,
+            )
+        else:
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        try:
+            process.kill()
+        except (ProcessLookupError, PermissionError):
+            pass
+
     def _safe_env(self) -> dict[str, str]:
         env = {key: os.environ[key] for key in _ENV_ALLOWLIST if key in os.environ}
         env["PYTHONPATH"] = str(self.root.resolve())
@@ -218,14 +339,6 @@ class Workspace:
         env["NO_COLOR"] = "1"
         env["PYTHONHASHSEED"] = "0"
         return env
-
-
-def _decode(value: bytes | str | None) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return value
 
 
 def _count(pattern: re.Pattern[str], text: str) -> int:

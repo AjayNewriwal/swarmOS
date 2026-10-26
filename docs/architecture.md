@@ -184,6 +184,45 @@ Providers report text and token usage. The runtime owns pricing (`Settings.rates
 
 SwarmOS makes no assumption that a hosted assistant exposes its internal models. If no endpoint is configured, runs use the fixture and say so in the run record, the trace, and the UI.
 
+## Model selection, errors, and safety
+
+An API key is optional; only the base URL and fast model id are required. Requests
+carry `temperature: 0.1` and, when enabled, `response_format: json_object`, which is
+downgraded once if the server rejects it.
+
+`RunRuntime.selection_for_role(role)` resolves a `ModelProfile` (`fast` or `strong`)
+under the active policy. `selection_for_tier("strong")` raises
+`ModelUnavailableError` rather than silently returning the fast model, so an
+unavailable escalation is recorded as unavailable.
+
+```mermaid
+flowchart LR
+    R[Request role] --> P{Policy}
+    P -->|fast_only / adaptive| F[fast profile]
+    P -->|config / role_routed| RR{role routing}
+    RR -->|strong| S[strong profile]
+    RR -->|fast| F
+    E[Escalation] -->|strong configured| S
+    E -->|not configured| X[ModelUnavailableError]
+```
+
+`ProviderError` carries `category`, `retryable`, `status_code`, and optionally
+`retry_after_seconds`. The call runner retries only `rate_limit`, `timeout`,
+`connection`, and `server`, with exponential backoff. `auth`, `bad_request`,
+`not_found`, and `invalid_response` fail fast. Invalid structured output is retried
+with a repair note containing the parser error.
+
+The Verification Agent runs the configured command inside the run's temporary
+workspace. Execution is gated by `SWARMOS_EXECUTION_ENABLED`, restricted by a binary
+allowlist (no shell), bounded by a timeout that kills the process tree, and given a
+filtered environment so provider credentials are not inherited. This is containment,
+not a sandbox: there is no kernel isolation or network block. See
+[safety.md](safety.md).
+
+Runs also record `provider_kind`, `model_policy`, `models_by_role`,
+`monetary_enforced`, and `usage_available`. Existing databases are migrated on open
+by adding missing columns with defaults; no data is rewritten.
+
 ## Extension points
 
 - **New agent role:** subclass `Agent[InputT, OutputT]`, add a node, and route to it. Typed inputs keep prompts and parsing together.

@@ -90,13 +90,17 @@ async def test_run_halts_when_budget_is_exhausted(build_run):
     orchestrator, runtime, record = build_run(
         provider,
         limits=Limits(max_budget_usd=0.05, max_agent_calls=20),
+        base_url="http://127.0.0.1:1/v1",
+        fast_model="fast-model",
         fast_input_rate=1.0,
         fast_output_rate=1.0,
         reservation_usd=0.02,
     )
     result = await orchestrator.run(record)
 
+    assert runtime.settings.monetary_enforced is True
     assert result.record.status == "budget_exceeded"
+    assert result.record.monetary_enforced is True
     assert runtime.ledger.denied >= 1
     assert result.record.cost_usd > 0
     assert any(event.kind == "budget" for event in result.events)

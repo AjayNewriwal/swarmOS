@@ -153,7 +153,11 @@ async def test_retries_are_bounded_then_escalated_then_stopped(build_run):
 
     provider = ScriptedProvider(handler)
     orchestrator, runtime, record = build_run(
-        provider, limits=Limits(max_retries=1, max_escalations=1)
+        provider,
+        limits=Limits(max_retries=1, max_escalations=1),
+        base_url="http://127.0.0.1:1/v1",
+        fast_model="fast-model",
+        strong_model="strong-model",
     )
     result = await orchestrator.run(record)
 

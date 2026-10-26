@@ -1,5 +1,5 @@
 import type { PlanStep, RunDetail as RunDetailData, TraceEvent } from "../types";
-import { isTerminal } from "../types";
+import { isTerminal, providerLabel } from "../types";
 import { StatusBadge } from "./StatusBadge";
 import { TraceTimeline } from "./TraceTimeline";
 
@@ -60,8 +60,11 @@ export function RunDetail({ detail }: { detail: RunDetailData }) {
         <div className="detail-title">
           <div className="detail-topline">
             <StatusBadge status={run.status} />
-            <span className="muted mono">{run.run_id}</span>
-            <span className="muted">{run.provider}</span>
+            <span className="mono muted">{run.run_id}</span>
+            <span className={`mode-tag ${run.provider_kind}`}>
+              {providerLabel(run.provider_kind)}
+            </span>
+            <span className="muted mono small">{run.provider}</span>
             {live && <span className="live">live</span>}
           </div>
           <h1>{run.goal}</h1>
@@ -95,7 +98,45 @@ export function RunDetail({ detail }: { detail: RunDetailData }) {
       {run.provider_warning && (
         <div className="callout warning">{run.provider_warning}</div>
       )}
+      {run.provider_kind === "demo" ? (
+        <div className="callout warning">
+          Demo fixture: model outputs are scripted, no inference happened. The
+          plan, coding, and review text are simulated; verification and the trace
+          are real.
+        </div>
+      ) : (
+        <div className="callout success">
+          {providerLabel(run.provider_kind)}: every model invocation below was
+          sent to the configured endpoint. Verification ran real tests.
+        </div>
+      )}
       {run.error && <div className="callout danger">{run.error}</div>}
+
+      <section className="panel">
+        <div className="panel-head">
+          <h2>Model routing</h2>
+          <span className="muted mono">{run.model_policy}</span>
+        </div>
+        <div className="limit-chips">
+          {Object.entries(run.models_by_role).map(([role, model]) => (
+            <span className="chip-static" key={role}>
+              {role} → <span className="mono">{model}</span>
+            </span>
+          ))}
+        </div>
+        <div className="limit-chips">
+          <span className={`chip-static ${run.monetary_enforced ? "ok" : "danger"}`}>
+            {run.monetary_enforced
+              ? "USD budget enforced"
+              : "USD budget not enforced (pricing unknown)"}
+          </span>
+          <span className={`chip-static ${run.usage_available ? "ok" : ""}`}>
+            {run.usage_available
+              ? "token usage reported"
+              : "token usage unavailable"}
+          </span>
+        </div>
+      </section>
 
       <section className="panel">
         <div className="panel-head">
@@ -115,7 +156,7 @@ export function RunDetail({ detail }: { detail: RunDetailData }) {
             </span>
           </div>
           <div className="meter-row">
-            <span>Budget</span>
+            <span>{run.monetary_enforced ? "Budget" : "Cost*"}</span>
             <div className="meter">
               <div style={{ width: `${budgetPct}%` }} />
             </div>

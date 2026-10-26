@@ -72,3 +72,34 @@ The starting point was `swarmos_mvp.zip`: a 15-file prototype with a FastAPI she
 - The plan is a single model call. If it schedules two steps that touch one file, the run fails on conflict rather than repairing the plan.
 - Verification trusts the configured command. A malicious project could commit a `conftest.py` that does damage; the environment filter and timeout limit leakage but are not a sandbox.
 - Background runs are in-process. A restart abandons an in-flight run; durable resume is the next milestone.
+## Update: MVP completion pass (v0.3)
+
+Resolved since the audit:
+
+- The adapter now classifies auth, rate-limit, timeout, connection, bad-request,
+  not-found, server, invalid-response, and config failures, and retries only the
+  transient ones with backoff.
+- An API key is optional, so local inference works without one.
+- JSON mode is requested when enabled and downgraded once if the server rejects
+  `response_format`; the mode is recorded per invocation.
+- Usage is read from standard and Ollama fields; missing usage is recorded as
+  unavailable rather than estimated.
+- `SWARMOS_PROVIDER` is applied to `auto` requests instead of only being displayed.
+- Role -> profile routing, `fast_only`/`adaptive`/`role_routed` policies, and an
+  explicit "escalation unavailable" outcome replace the silent downgrade.
+- USD is only claimed as enforced when both token rates are configured for every
+  usable profile; the run summary states which case applies.
+- Execution is gated by an allowlist, a disable switch, a process-tree timeout, and
+  a filtered environment; repository copying is opt-in and skips secrets.
+- The API supports an optional bearer token and the CLI refuses non-loopback binds
+  without one.
+- A benchmark harness records reproducible policies and withholds cost comparisons
+  when usage or pricing is missing.
+- MIT LICENSE added; packaging metadata updated.
+
+Still open, and stated as such in the README:
+
+- No live local-model run has been performed in this environment; the adapter is
+  mock-tested only.
+- No kernel sandbox, network isolation, live repository workflow, checkpointing, or
+  multi-provider routing.
