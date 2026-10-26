@@ -101,3 +101,86 @@ def test_results_are_written_as_jsonl(tmp_path):
         assert payload["provider"] == "demo"
     finally:
         store.close()
+
+def _result(policy: str, escalation_available: bool | None, **overrides):
+    from app.benchmark import BenchmarkResult
+
+    base = {
+        "run_id": f"run_{policy}",
+        "task_id": "t1",
+        "policy": policy,
+        "provider": "openai-compatible:local",
+        "provider_kind": "local",
+        "model_policy": "adaptive",
+        "escalation_available": escalation_available,
+        "status": "completed",
+        "verification_passed": True,
+        "agent_calls": 5,
+        "duration_ms": 1000,
+    }
+    base.update(overrides)
+    return BenchmarkResult(**base)
+
+
+def test_summary_warns_when_escalation_cannot_select_a_stronger_model():
+    results = [
+        _result("fixed-fast", False),
+        _result("adaptive", False),
+        _result("multi-agent", False),
+    ]
+    summary = summarise(results)
+
+    warnings = summary["warnings"]
+    assert len(warnings) == 1
+    text = warnings[0]
+    assert "Escalation is inert" in text
+    assert "adaptive" in text and "multi-agent" in text
+    assert "not evidence that the policies perform equivalently" in text
+    assert "OPENAI_COMPAT_MODEL_STRONG" in text
+    # The non-escalating policy is not blamed for being unable to escalate.
+    assert "fixed-fast" not in text
+
+
+def test_summary_does_not_warn_when_a_stronger_model_is_available():
+    results = [
+        _result("fixed-fast", True),
+        _result("adaptive", True),
+        _result("multi-agent", True),
+    ]
+    summary = summarise(results)
+    assert summary["warnings"] == []
+
+
+def test_summary_reports_unknown_escalation_availability():
+    results = [_result("adaptive", None)]
+    summary = summarise(results)
+    assert len(summary["warnings"]) == 1
+    assert "was not recorded" in summary["warnings"][0]
+
+
+def test_summary_warning_does_not_change_reported_metrics():
+    inert = summarise([_result("adaptive", False)])
+    available = summarise([_result("adaptive", True)])
+    assert inert["policies"] == available["policies"]
+    assert inert["cost_comparable"] == available["cost_comparable"]
+
+
+def test_result_records_escalation_availability(tmp_path):
+    store = RunStore(tmp_path / "bench.db")
+    settings = make_settings(tmp_path, provider="demo")
+    service = RunService(settings, store)
+    try:
+        task = load_tasks(TASKS)[0]
+        record = asyncio.run(
+            service.run_request(request_for(task, POLICIES["adaptive"], "demo", 0.0))
+        )
+        item = result_from_run(
+            task_id=task.id,
+            policy="adaptive",
+            record=record,
+            events=store.get_events(record.run_id),
+            escalation_available=False,
+        )
+        assert item.escalation_available is False
+    finally:
+        store.close()

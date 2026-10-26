@@ -32,6 +32,23 @@ def _service(db_path: str) -> tuple[RunService, RunStore]:
     return RunService(settings, store), store
 
 
+def _warn_zero_budget(provider: str) -> None:
+    """Warn when a zero budget would be enforced as a hard refusal.
+
+    A zero cap means "unlimited" while no token rates are configured, but once
+    rates exist the ledger refuses every call. Say so before the run fails, and
+    do not change the requested limit.
+    """
+    uses_real_endpoint = provider != "demo" and settings.openai_configured
+    if uses_real_endpoint and settings.pricing_known:
+        print(
+            "WARNING: --budget 0 is enforced as a hard cap when token rates are "
+            "configured, so every model call will be refused. Pass a real cap "
+            "such as --budget 0.50, or unset the rates to disable USD limits.",
+            file=sys.stderr,
+        )
+
+
 def _print_run(record) -> None:
     print(record.summary)
     print()
@@ -44,6 +61,7 @@ def _print_run(record) -> None:
 
 def _cmd_run(args: argparse.Namespace) -> int:
     service, store = _service(args.db)
+    _warn_zero_budget(args.provider)
     request = RunRequest(
         goal=args.goal,
         provider=args.provider,
@@ -94,6 +112,7 @@ def _cmd_trace(args: argparse.Namespace) -> int:
 
 def _cmd_bench(args: argparse.Namespace) -> int:
     service, store = _service(args.db)
+    _warn_zero_budget(args.provider)
     tasks = load_tasks(BENCHMARKS)
     if args.limit:
         tasks = tasks[: args.limit]
@@ -113,7 +132,11 @@ def _cmd_bench(args: argparse.Namespace) -> int:
                 events = store.get_events(record.run_id)
                 results.append(
                     result_from_run(
-                        task_id=task.id, policy=policy.name, record=record, events=events
+                        task_id=task.id,
+                        policy=policy.name,
+                        record=record,
+                        events=events,
+                        escalation_available=settings.escalation_available,
                     )
                 )
                 if record.status != "completed":
@@ -135,6 +158,10 @@ def _cmd_bench(args: argparse.Namespace) -> int:
 
     summary = summarise(results)
     print()
+    for warning in summary.get("warnings", []):
+        print(f"WARNING: {warning}")
+    if summary.get("warnings"):
+        print()
     print(json.dumps(summary, indent=2))
 
     if args.out:

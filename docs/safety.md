@@ -59,8 +59,9 @@ The copy still has no git history, so nothing can be pushed back.
 - `max_agent_calls` and `max_wall_seconds` are enforced by the ledger before each
   call and always apply.
 - `max_retries`, `max_revisions`, and `max_escalations` bound the loops.
-- USD limits apply **only** when pricing is configured; see
-  [providers.md](providers.md).
+- USD limits apply **only** when pricing is configured, and they are a soft cap
+  rather than a hard limit: parallel in-flight calls can collectively exceed the
+  configured amount. See [providers.md](providers.md).
 - A coding branch cannot report a step complete: only the serial merge node can,
   after conflict validation.
 

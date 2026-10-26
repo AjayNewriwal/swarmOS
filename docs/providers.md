@@ -131,8 +131,13 @@ validation still applies.
   are configured for every usable profile.** Otherwise the run says
   "Monetary budget: NOT enforced" and call, time, retry, and revision limits are
   the effective controls.
-- Even when enforced, reserves are settled after each call, so one in-flight call
-  may exceed the cap by its actual cost. The summary says this explicitly.
+- Even when enforced, the cap is **soft, not a strict hard limit**. Reserves are
+  settled after each call, so a call already in flight can exceed the cap by its
+  own cost, and several parallel in-flight calls can collectively exceed the
+  configured cap before any of them settles. The cap bounds the spend of calls
+  that have not started yet; it does not bound the total spend of the run. The
+  call count and the wall clock are always enforced. The summary says this
+  explicitly.
 
 ## Testing status
 

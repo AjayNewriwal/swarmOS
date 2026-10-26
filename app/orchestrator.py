@@ -913,9 +913,11 @@ class Orchestrator:
         )
         if self.runtime.settings.monetary_enforced:
             lines.append(
-                f"Monetary budget: enforced at ${self.runtime.limits.max_budget_usd:.4f} "
-                "(token rates configured; reservations settle after each call, so a "
-                "single call may exceed the cap by its actual cost)"
+                f"Monetary budget: soft cap of ${self.runtime.limits.max_budget_usd:.4f} "
+                "(token rates configured; this is not a hard limit, because "
+                "reservations settle after each call, so a call already in flight "
+                "can exceed the cap by its own cost and several parallel in-flight "
+                "calls can collectively exceed it)"
             )
         else:
             lines.append(

@@ -62,6 +62,7 @@ class BenchmarkResult(BaseModel):
     provider_kind: str
     model_policy: str
     models_by_role: dict[str, str] = Field(default_factory=dict)
+    escalation_available: bool | None = None
     status: str
     verification_passed: bool = False
     agent_calls: int = 0
@@ -88,7 +89,12 @@ def load_tasks(path: Path) -> list[BenchmarkTask]:
 
 
 def result_from_run(
-    *, task_id: str, policy: str, record, events: list
+    *,
+    task_id: str,
+    policy: str,
+    record,
+    events: list,
+    escalation_available: bool | None = None,
 ) -> BenchmarkResult:
     invocations = [
         event.payload.get("invocation", {})
@@ -104,6 +110,7 @@ def result_from_run(
         provider_kind=record.provider_kind,
         model_policy=record.model_policy,
         models_by_role=record.models_by_role,
+        escalation_available=escalation_available,
         status=record.status,
         verification_passed=bool(record.verification and record.verification.passed),
         agent_calls=record.agent_calls,
@@ -145,6 +152,12 @@ def summarise(results: list[BenchmarkResult]) -> dict[str, object]:
     A cost comparison is only emitted when every result has usage metadata and
     monetary enforcement active. Otherwise the caller gets a reason instead of
     a number that would be misleading.
+
+    Policies that are supposed to escalate but cannot (no distinct strong model
+    configured) are called out explicitly. Without that warning, equal numbers
+    across ``fixed-fast``, ``adaptive``, and ``multi-agent`` would read as
+    evidence that the policies are equivalent, when the escalation knob was
+    simply inert.
     """
     by_policy: dict[str, list[BenchmarkResult]] = {}
     for item in results:
@@ -166,6 +179,41 @@ def summarise(results: list[BenchmarkResult]) -> dict[str, object]:
     comparable = bool(results) and all(
         i.usage_available and i.monetary_enforced for i in results
     )
+
+    escalatable = [
+        name
+        for name, items in by_policy.items()
+        if POLICIES.get(name) and POLICIES[name].max_escalations > 0
+    ]
+    inert = sorted(
+        name
+        for name in escalatable
+        if all(item.escalation_available is False for item in by_policy[name])
+    )
+    unknown = sorted(
+        name
+        for name in escalatable
+        if all(item.escalation_available is None for item in by_policy[name])
+    )
+
+    warnings: list[str] = []
+    if inert:
+        warnings.append(
+            "Escalation is inert for "
+            + ", ".join(inert)
+            + ": no distinct strong model is configured, so these policies "
+            "cannot select a stronger model. Their results are identical to "
+            "the non-escalating policy by construction, not evidence that the "
+            "policies perform equivalently. Set OPENAI_COMPAT_MODEL_STRONG to a "
+            "different model id to make the comparison meaningful."
+        )
+    if unknown:
+        warnings.append(
+            "Escalation availability was not recorded for "
+            + ", ".join(unknown)
+            + ", so it cannot be confirmed that a stronger model was reachable."
+        )
+
     return {
         "policies": aggregate,
         "cost_comparable": comparable,
@@ -175,6 +223,7 @@ def summarise(results: list[BenchmarkResult]) -> dict[str, object]:
             else "cost comparison withheld: usage metadata or token pricing is "
             "missing, so USD figures are estimates, not comparable measurements"
         ),
+        "warnings": warnings,
         "note": "All policies run the same orchestration graph; they differ only in "
         "model selection and escalation. No policy is declared best from this run.",
     }

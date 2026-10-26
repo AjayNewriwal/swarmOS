@@ -116,8 +116,15 @@ Then:
 
 ```bash
 swarmos run "Implement tag normalization so the failing tests pass" --provider openai \
-  --policy adaptive --budget 0 --max-calls 8 --max-retries 1 --max-escalations 0
+  --policy adaptive --budget 0.50 --max-calls 8 --max-retries 1 --max-escalations 0
 ```
+
+`--budget 0.50` is a soft USD cap. It only takes effect once you configure
+token rates (`FAST_*_USD_PER_MILLION` and friends); with no rates configured the
+cap is inactive and the call, time, retry, and revision limits are the real
+controls. Do not pass `--budget 0` to mean "unlimited": when rates *are*
+configured, a zero cap refuses every call and the run fails immediately with
+`budget_exceeded`. Leave the default, or set a real cap.
 
 `OPENAI_COMPAT_MODEL_STRONG` must be a **different** model id to enable escalation. If it is absent or identical, SwarmOS reports escalation as unavailable instead of calling the fast model twice. An API key is optional locally and required for hosted endpoints.
 
@@ -180,9 +187,9 @@ The dashboard shows run status, dependency waves, agent invocations, routing dec
 | `max_retries` | Coding attempts per step, plus repair rounds after failed verification |
 | `max_revisions` | Review → revise cycles |
 | `max_escalations` | Bounded switch to a configured strong profile |
-| `max_budget_usd` | Enforced **only** when both input and output token rates are configured |
+| `max_budget_usd` | A **soft** cap, enforced only when both input and output token rates are configured. Not a hard limit — see below. |
 
-USD honesty: with unknown pricing the run reports **"Monetary budget: NOT enforced"** and relies on call, time, retry, and revision limits. Even when enforced, cost is reserved before a call and settled after, so one in-flight call may exceed the cap by its actual cost. Missing usage metadata is recorded as unavailable, never estimated.
+USD honesty: with unknown pricing the run reports **"Monetary budget: NOT enforced"** and relies on call, time, retry, and revision limits. Even when rates are configured, the cap is **not a strict hard limit**: cost is reserved before a call and settled afterwards, so a call already in flight can exceed the cap by its own cost, and several parallel in-flight calls can collectively exceed the configured cap before any of them settles. The cap bounds the spend of calls that have not started yet; it does not bound the total spend of the run. The call count and the wall clock are the limits that are always enforced. Missing usage metadata is recorded as unavailable, never estimated.
 
 ## Execution safety
 
@@ -199,10 +206,19 @@ This is containment, not a sandbox: there is no kernel isolation or network bloc
 
 ```bash
 swarmos bench --provider demo --out benchmarks/results/demo.jsonl
-swarmos bench --provider openai --policy fixed-fast adaptive multi-agent --budget 0
+swarmos bench --provider openai --policy fixed-fast adaptive multi-agent --budget 0.50
 ```
 
 All policies run the same graph and differ only in model selection. The harness records status, verification, calls, retries, escalations, duration, tokens, and cost **only when reported**. It withholds a cost comparison when usage or pricing is missing and never declares a winner.
+
+`--budget` defaults to `0` for `bench`. As with `run`, a zero cap is not
+"unlimited": once token rates are configured it refuses every call. Pass a real
+cap such as `--budget 0.50`, or omit it when no rates are configured.
+
+The summary warns explicitly when a policy that is supposed to escalate cannot
+select a distinct stronger model. In that case the escalating policies produce
+the same numbers as the non-escalating one **by construction**, so equal
+results are not evidence that the policies are equivalent.
 
 Tasks are in `benchmarks/tasks.jsonl`; results are written to `benchmarks/results/`, which is git-ignored.
 
