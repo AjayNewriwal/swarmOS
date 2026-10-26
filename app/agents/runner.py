@@ -230,7 +230,7 @@ class AgentRunner:
             result.output = output
             result.error = None
             result.error_class = None
-            self._emit_invocation(invocation)
+            self._emit_invocation(invocation, output_summary=agent.summarize(output))
             return result
 
         return result
@@ -242,7 +242,11 @@ class AgentRunner:
         base = max(0.0, self.runtime.settings.retry_backoff_seconds)
         return min(_MAX_BACKOFF_SECONDS, base * (2**offset))
 
-    def _emit_invocation(self, invocation: AgentInvocation) -> None:
+    def _emit_invocation(
+        self,
+        invocation: AgentInvocation,
+        output_summary: dict[str, object] | None = None,
+    ) -> None:
         self.runtime.emit(
             "agent_invocation",
             f"{invocation.role} {invocation.status}"
@@ -264,4 +268,5 @@ class AgentRunner:
             cost_usd=invocation.cost_usd,
             error_class=invocation.error_class,
             error=invocation.error,
+            output_summary=output_summary or {},
         )

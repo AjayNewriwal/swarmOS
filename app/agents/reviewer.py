@@ -41,6 +41,23 @@ class ReviewAgent(Agent[ReviewInput, ReviewOutput]):
     output_model = ReviewOutput
     system = SYSTEM
 
+    def summarize(self, output: ReviewOutput) -> dict[str, object]:
+        return {
+            "kind": "review",
+            "verdict": output.verdict,
+            "rationale": self._clip(output.rationale),
+            "findings": [
+                {
+                    "severity": finding.severity,
+                    "step_id": finding.step_id,
+                    "file": finding.file,
+                    "message": self._clip(finding.message),
+                }
+                for finding in output.findings[: self.summary_finding_limit]
+            ],
+            "finding_count": len(output.findings),
+        }
+
     def build_request(
         self, payload: ReviewInput, model: str, repair_note: str | None = None
     ) -> ModelRequest:

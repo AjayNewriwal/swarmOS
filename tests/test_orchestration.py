@@ -172,7 +172,11 @@ async def test_rejections_stop_at_the_revision_limit(build_run, max_revisions):
     )
     result = await orchestrator.run(record)
 
-    assert result.record.status == "completed_with_findings"
-    assert result.record.revisions == max_revisions + 1
     reviews = [call for call in provider.calls if call.role == "reviewer"]
+    assert result.record.status == "completed_with_findings"
+    # ``revisions`` counts dispatched revision rounds, not review rejections.
+    assert result.record.revisions == max_revisions
     assert len(reviews) == max_revisions + 1
+    # A rejected run now carries diagnostic evidence but keeps its status.
+    assert result.record.verification is not None
+    assert "Verification (diagnostic)" in result.record.summary

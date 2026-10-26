@@ -130,10 +130,23 @@ class ScriptedProvider:
 
 
 def make_settings(tmp_path: Path, **overrides):
+    # Tests must not depend on a developer's .env. Start from a demo-only,
+    # unpriced configuration and let individual tests opt into a real endpoint.
     values = {
         "db_path": tmp_path / "test.db",
         "verification_timeout_seconds": 60,
         "reservation_usd": 0.02,
+        "provider": "demo",
+        "base_url": "",
+        "api_key": "",
+        "fast_model": "",
+        "strong_model": "",
+        "fast_input_rate": 0.0,
+        "fast_output_rate": 0.0,
+        "strong_input_rate": 0.0,
+        "strong_output_rate": 0.0,
+        "role_models": "",
+        "model_policy": "config",
     }
     values.update(overrides)
     return replace(base_settings, **values)

@@ -56,6 +56,7 @@ export interface Verification {
   stdout_tail: string;
   stderr_tail: string;
   workspace_files: string[];
+  diagnostic: boolean;
 }
 
 export interface RunRecord {

@@ -251,6 +251,8 @@ class VerificationResult(BaseModel):
     stdout_tail: str = ""
     stderr_tail: str = ""
     workspace_files: list[str] = Field(default_factory=list)
+    # True when this ran after a rejected review, purely for evidence.
+    diagnostic: bool = False
 
 
 class AgentInvocation(BaseModel):
@@ -324,6 +326,7 @@ class RunRecord(BaseModel):
     usage_available: bool = False
     agent_calls: int = 0
     escalations: int = 0
+    # Revision rounds actually dispatched, not the number of review rejections.
     revisions: int = 0
     duration_ms: int = 0
     changed_files: list[str] = Field(default_factory=list)

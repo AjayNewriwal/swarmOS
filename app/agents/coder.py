@@ -40,3 +40,13 @@ class CodingAgent(Agent[CodingInput, CodingOutput]):
         if output.step_id != output.step_id.strip() or not output.step_id:
             raise AgentOutputError("coder returned an empty step_id")
         return output
+
+    def summarize(self, output: CodingOutput) -> dict[str, object]:
+        return {
+            "kind": "coding",
+            "step_id": output.step_id,
+            "summary": self._clip(output.summary),
+            "rationale": self._clip(output.rationale),
+            "changes": [change.path for change in output.changes[:20]],
+            "change_count": len(output.changes),
+        }

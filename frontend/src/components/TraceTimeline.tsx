@@ -42,10 +42,20 @@ function asRecord(value: unknown): Record<string, any> {
 
 function Summary({ event }: { event: TraceEvent }) {
   const payload = asRecord(event.payload);
+  const output = asRecord(payload.output_summary);
+  const summaryLine =
+    output.kind === "coding"
+      ? String(output.summary ?? "")
+      : output.kind === "review"
+        ? `${String(output.verdict ?? "")} - ${String(output.finding_count ?? 0)} finding(s)`
+        : output.kind === "plan"
+          ? `${String(output.step_count ?? 0)} planned step(s)`
+          : "";
   switch (event.kind) {
     case "agent_invocation":
       return (
-        <div className="chips">
+        <>
+          <div className="chips">
           <span className="chip-static">{payload.role}</span>
           <span className="chip-static mono">{payload.model}</span>
           <span className="chip-static">{payload.profile ?? payload.tier}</span>
@@ -67,7 +77,9 @@ function Summary({ event }: { event: TraceEvent }) {
           {payload.error ? (
             <span className="chip-static danger">{String(payload.error).slice(0, 90)}</span>
           ) : null}
-        </div>
+          </div>
+          {summaryLine ? <p className="muted small">{summaryLine}</p> : null}
+        </>
       );
     case "routing_decision":
       return (
@@ -85,6 +97,9 @@ function Summary({ event }: { event: TraceEvent }) {
     case "verification":
       return (
         <div className="chips">
+          {payload.diagnostic ? (
+            <span className="chip-static accent">diagnostic</span>
+          ) : null}
           <span className={`chip-static ${payload.passed ? "ok" : "danger"}`}>
             exit {payload.exit_code}
           </span>

@@ -142,7 +142,7 @@ export function RunDetail({ detail }: { detail: RunDetailData }) {
         <div className="panel-head">
           <h2>Autonomy envelope</h2>
           <span className="muted">
-            {run.escalations} escalation(s) Â· {run.revisions} review round(s)
+            {run.escalations} escalation(s) · {run.revisions} revision round(s)
           </span>
         </div>
         <div className="meters">
@@ -170,7 +170,7 @@ export function RunDetail({ detail }: { detail: RunDetailData }) {
             max {run.limits.max_retries} retries/step
           </span>
           <span className="chip-static">
-            max {run.limits.max_revisions} review rounds
+            max {run.limits.max_revisions} revision rounds
           </span>
           <span className="chip-static">
             max {run.limits.max_escalations} escalation(s)
@@ -184,7 +184,7 @@ export function RunDetail({ detail }: { detail: RunDetailData }) {
           <div className="panel-head">
             <h2>Plan</h2>
             <span className="muted">
-              {run.plan.steps.length} step(s) Â· {planWaves.length} wave(s)
+              {run.plan.steps.length} step(s) · {planWaves.length} wave(s)
             </span>
           </div>
           <div className="waves">
@@ -192,7 +192,7 @@ export function RunDetail({ detail }: { detail: RunDetailData }) {
               <div className="wave" key={index}>
                 <div className="wave-label">
                   Wave {index + 1}
-                  {wave.length > 1 ? <span className="accent"> Â· parallel</span> : null}
+                  {wave.length > 1 ? <span className="accent"> · parallel</span> : null}
                 </div>
                 {wave.map((step) => {
                   const state = states.get(step.id);
@@ -261,7 +261,7 @@ export function RunDetail({ detail }: { detail: RunDetailData }) {
                     <div>
                       <p>{finding.message}</p>
                       <span className="mono muted">
-                        {[finding.step_id, finding.file].filter(Boolean).join(" Â· ")}
+                        {[finding.step_id, finding.file].filter(Boolean).join(" · ")}
                       </span>
                     </div>
                   </li>
@@ -289,6 +289,12 @@ export function RunDetail({ detail }: { detail: RunDetailData }) {
         </div>
         {run.verification ? (
           <>
+            {run.verification.diagnostic && (
+              <p className="hint">
+                Diagnostic only: the reviewer did not approve these changes, so
+                this result is evidence, not an approval.
+              </p>
+            )}
             <div className="verify-grid">
               <div>
                 <span>Command</span>

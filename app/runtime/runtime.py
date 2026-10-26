@@ -90,9 +90,13 @@ class RunRuntime:
     # ------------------------------------------------------------------
     @property
     def profiles(self) -> dict[str, ModelProfile]:
+        # The demo fixture never calls the configured endpoint, so it must not
+        # inherit that endpoint's model ids into the run record.
+        if self.provider_name == "demo":
+            return {"fast": ModelProfile("fast", "demo-fast")}
         profiles = self.settings.configured_profiles()
         if not profiles:
-            # Demo or unconfigured runs still carry a coherent label.
+            # Unconfigured runs still carry a coherent label.
             profiles = {"fast": ModelProfile("fast", self.settings.model_for("fast"))}
         return profiles
 

@@ -13,7 +13,8 @@ Routing rules are deliberately explicit and small:
   step in one fan-out is independent of the others;
 * a coding step gets at most ``max_retries + 1`` attempts;
 * one model escalation is allowed by default, after retries are exhausted;
-* review can request changes at most ``max_revisions`` times;
+* review can request changes at most ``max_revisions`` times before the run
+  finalises, and each revision round actually dispatched is counted once;
 * verification failures can trigger at most ``max_retries`` repair rounds;
 * the ledger refuses any call that would exceed the budget, call, or time limit.
 """
@@ -41,6 +42,7 @@ from app.models import (
     ReviewInput,
     RunRecord,
     TraceEvent,
+    VerificationResult,
     utc_now,
 )
 from app.providers.base import ModelUnavailableError
@@ -279,6 +281,10 @@ class Orchestrator:
 
         updates: dict = self._call_updates(result)
         updates["attempts"] = {step.id: attempt}
+        # A revision round is counted once per dispatch, not once per branch, so
+        # every branch reports the same round number and the reducer keeps the max.
+        if state.get("mode") == "revision" and int(state.get("revision_round", 0)) > 0:
+            updates["revisions"] = int(state["revision_round"])
 
         if result.output is None:
             updates["failures"] = [
@@ -436,13 +442,14 @@ class Orchestrator:
         review = result.output
         updates["review"] = review
         if review.verdict == "request_changes":
-            updates["revisions"] = int(state.get("revisions", 0) or 0) + 1
+            rejections = int(state.get("review_rejections", 0) or 0) + 1
+            updates["review_rejections"] = rejections
             updates["pending_review_steps"] = self._review_targets(plan, review)
             self.runtime.emit(
                 "revision",
                 "Review requested changes",
                 findings=[finding.model_dump(mode="json") for finding in review.findings],
-                round=updates["revisions"],
+                review_rejection=rejections,
                 steps=updates["pending_review_steps"],
             )
         else:
@@ -548,19 +555,94 @@ class Orchestrator:
             status = "failed"
             error = "the run ended before verification"
 
-        summary = self._summary(state, status=status, error=error)
+        # A rejected run used to end with no test evidence at all. Attach a
+        # diagnostic verification instead: it records ground truth without
+        # approving the changes, changing the status, or re-entering coding.
+        diagnostic = False
+        if status == "completed_with_findings" and verification is None:
+            verification = self._diagnostic_verification()
+            diagnostic = True
+
+        summary = self._summary(
+            state,
+            status=status,
+            error=error,
+            verification=verification,
+            diagnostic=diagnostic,
+        )
         self.runtime.emit(
             "run_finished",
             f"Run finished: {status}",
             status=status,
             error=error,
             summary=summary,
+            verification=(
+                {
+                    "diagnostic": diagnostic,
+                    "passed": verification.passed,
+                    "exit_code": verification.exit_code,
+                    "tests_passed": verification.tests_passed,
+                    "tests_failed": verification.tests_failed,
+                }
+                if verification is not None
+                else None
+            ),
             cost_usd=round(self.runtime.ledger.spent_usd, 8),
             agent_calls=self.runtime.ledger.calls,
             ledger=self.runtime.ledger.snapshot(),
             escalated=bool(state.get("escalations")),
         )
-        return {"status": status, "error": error, "summary": summary, "stage": "done"}
+        return {
+            "status": status,
+            "error": error,
+            "summary": summary,
+            "stage": "done",
+            "verification": verification,
+        }
+
+    def _diagnostic_verification(self) -> VerificationResult:
+        """Run the real test command for a rejected run and record the evidence.
+
+        This deliberately does not touch the verdict, status, or repair routing.
+        If execution is disabled, the command is not allowed, or the verifier
+        raises, the failure is recorded as a failed verification with the reason
+        rather than being reported as a pass or silently omitted.
+        """
+        try:
+            result = self.verifier.verify(self.runtime.workspace)
+        except Exception as exc:  # noqa: BLE001 - never lose the diagnostic reason
+            result = VerificationResult(
+                passed=False,
+                command=self.runtime.settings.verification_command,
+                exit_code=127,
+                duration_ms=0,
+                stdout_tail="",
+                stderr_tail=(
+                    "diagnostic verification could not run: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+                workspace_files=self.runtime.workspace.file_list(),
+            )
+        self.runtime.emit(
+            "verification",
+            (
+                "Diagnostic verification passed"
+                if result.passed
+                else "Diagnostic verification failed"
+            )
+            + " (reviewer did not approve; status unchanged)",
+            role="verifier",
+            diagnostic=True,
+            passed=result.passed,
+            command=result.command,
+            exit_code=result.exit_code,
+            tests_passed=result.tests_passed,
+            tests_failed=result.tests_failed,
+            duration_ms=result.duration_ms,
+            stdout_tail=result.stdout_tail,
+            stderr_tail=result.stderr_tail,
+        )
+        return result.model_copy(update={"diagnostic": True})
 
     # ------------------------------------------------------------------
     # conditional routing
@@ -599,7 +681,10 @@ class Orchestrator:
                     max_retries=self.runtime.limits.max_retries,
                 )
                 return self._dispatch(
-                    state, steps, reason="bounded retry after a coding failure"
+                    state,
+                    steps,
+                    reason="bounded retry after a coding failure",
+                    mode="retry",
                 )
             if self._can_escalate(state):
                 return "escalate"
@@ -624,7 +709,7 @@ class Orchestrator:
 
         pending = list(state.get("pending_review_steps", []) or [])
         if (
-            int(state.get("revisions", 0) or 0) <= self.runtime.limits.max_revisions
+            int(state.get("review_rejections", 0) or 0) <= self.runtime.limits.max_revisions
             and pending
         ):
             plan = state["plan"]
@@ -640,6 +725,7 @@ class Orchestrator:
                     steps,
                     findings_by_step=findings,
                     reason="review requested changes",
+                    mode="revision",
                 )
         if self._can_escalate(state):
             return "escalate"
@@ -667,6 +753,7 @@ class Orchestrator:
                         if part
                     ),
                     reason="verification failed; repairing the touched files",
+                    mode="repair",
                 )
         if self._can_escalate(state):
             return "escalate"
@@ -689,14 +776,18 @@ class Orchestrator:
             }
             if steps:
                 return self._dispatch(
-                    state, steps, findings_by_step=findings, reason="escalated revision"
+                    state,
+                    steps,
+                    findings_by_step=findings,
+                    reason="escalated revision",
+                    mode="revision",
                 )
 
         unresolved = self._unresolved_failures(state)
         if unresolved:
             steps = self._steps_for(plan, [f.step_id for f in unresolved])
             if steps:
-                return self._dispatch(state, steps, reason="escalated retry")
+                return self._dispatch(state, steps, reason="escalated retry", mode="retry")
 
         verification = state.get("verification")
         if verification is not None and not verification.passed:
@@ -711,6 +802,7 @@ class Orchestrator:
                         if part
                     ),
                     reason="escalated repair",
+                    mode="repair",
                 )
         return "finalize"
 
@@ -801,6 +893,7 @@ class Orchestrator:
         *,
         findings: list[ReviewFinding] | None = None,
         verification_stdout: str = "",
+        mode: str = "initial",
     ) -> CodeStepPayload:
         attempt = self._attempts(state, step.id) + 1
         return CodeStepPayload(
@@ -815,6 +908,10 @@ class Orchestrator:
             ],
             verification_stdout=verification_stdout,
             workspace_subdir=f"{step.id}-{attempt}",
+            mode=mode,
+            revision_round=(
+                int(state.get("review_rejections", 0) or 0) if mode == "revision" else 0
+            ),
         )
 
     def _dispatch(
@@ -825,6 +922,7 @@ class Orchestrator:
         findings_by_step: dict[str, list[ReviewFinding]] | None = None,
         verification_stdout: str = "",
         reason: str,
+        mode: str = "initial",
     ) -> list[Send]:
         payloads = [
             Send(
@@ -834,6 +932,7 @@ class Orchestrator:
                     step,
                     findings=(findings_by_step or {}).get(step.id),
                     verification_stdout=verification_stdout,
+                    mode=mode,
                 ),
             )
             for step in steps
@@ -843,6 +942,10 @@ class Orchestrator:
             f"Dispatching {len(steps)} coding step(s)",
             decision="dispatch_coding",
             reason=reason,
+            mode=mode,
+            revision_round=(
+                int(state.get("review_rejections", 0) or 0) if mode == "revision" else 0
+            ),
             steps=[step.id for step in steps],
             parallel=len(steps) > 1,
             tier=state.get("model_tier", "fast"),
@@ -862,11 +965,18 @@ class Orchestrator:
         }
 
     def _summary(
-        self, state: SwarmState, *, status: str | None = None, error: str | None = None
+        self,
+        state: SwarmState,
+        *,
+        status: str | None = None,
+        error: str | None = None,
+        verification: VerificationResult | None = None,
+        diagnostic: bool = False,
     ) -> str:
         plan = state.get("plan")
         review = state.get("review")
-        verification = state.get("verification")
+        if verification is None:
+            verification = state.get("verification")
         completed = sorted(set(state.get("completed_steps", []) or []))
         unresolved = self._unresolved_failures(state)
         lines: list[str] = []
@@ -882,12 +992,17 @@ class Orchestrator:
             "Review: " + (review.verdict if review is not None else "not reached")
         )
         if verification is not None:
+            label = "Verification (diagnostic)" if diagnostic else "Verification"
             lines.append(
-                "Verification: "
+                f"{label}: "
                 + ("passed" if verification.passed else "failed")
                 + f" ({verification.tests_passed} passed, {verification.tests_failed} failed, "
                 f"exit {verification.exit_code})"
             )
+            if diagnostic:
+                lines.append(
+                    "Diagnostic verification does not change the review verdict."
+                )
         else:
             lines.append("Verification: not run")
         if unresolved:

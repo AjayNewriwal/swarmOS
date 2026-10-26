@@ -48,6 +48,11 @@ def merge_dict_max(left: dict[str, int] | None, right: dict[str, int] | None) ->
     return merged
 
 
+def merge_max_int(left: int | None, right: int | None) -> int:
+    """Keep the highest revision-round number reported by a coding branch."""
+    return max(int(left or 0), int(right or 0))
+
+
 class SwarmState(TypedDict, total=False):
     # --- identity and envelope (written by the service, read-only in nodes)
     run_id: str
@@ -81,7 +86,12 @@ class SwarmState(TypedDict, total=False):
     # --- review / verification (single-writer)
     review: ReviewOutput | None
     pending_review_steps: list[str]
-    revisions: int
+    # Routing counter: how many review verdicts requested changes. It drives the
+    # ``max_revisions`` limit and is not the number reported as revisions.
+    review_rejections: int
+    # Reported counter: highest revision round dispatched. A wave of independent
+    # steps counts as one round, so parallel branches report the same number.
+    revisions: Annotated[int, merge_max_int]
     verification: VerificationResult | None
     verification_attempts: int
     escalations: int
@@ -90,6 +100,7 @@ class SwarmState(TypedDict, total=False):
     # --- outcome
     status: RunStatus
     error: str | None
+    summary: str
 
 
 def initial_state(
@@ -126,6 +137,7 @@ def initial_state(
         merged_coded=0,
         review=None,
         pending_review_steps=[],
+        review_rejections=0,
         revisions=0,
         verification=None,
         verification_attempts=0,
@@ -133,6 +145,7 @@ def initial_state(
         stage="planning",
         status="running",
         error=None,
+        summary="",
     )
 
 
@@ -148,3 +161,7 @@ class CodeStepPayload(TypedDict):
     review_findings: list[dict]
     verification_stdout: str
     workspace_subdir: str
+    # initial | retry | revision | repair
+    mode: str
+    # For mode == "revision": the review rejection that triggered this round.
+    revision_round: int

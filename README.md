@@ -18,6 +18,7 @@ It runs fully offline with a deterministic demo fixture, and against local open-
 | Call, wall-clock, and conditional USD limits | Implemented, tested |
 | SQLite runs and append-only trace | Implemented, tested |
 | Real pytest verification in a temp workspace | Implemented, tested |
+| Diagnostic verification on rejected runs | Real; recorded without changing the verdict |
 | OpenAI-compatible adapter (local first) | Implemented, **mock-tested only** |
 | Role → model-profile routing, honest fallback | Implemented, tested |
 | React dashboard with provider/model provenance | Implemented, type-checked, built |
@@ -185,7 +186,7 @@ The dashboard shows run status, dependency waves, agent invocations, routing dec
 | `max_agent_calls` | The ledger refuses the next call; the run ends `limit_exceeded` |
 | `max_wall_seconds` | A call after the deadline is refused |
 | `max_retries` | Coding attempts per step, plus repair rounds after failed verification |
-| `max_revisions` | Review → revise cycles |
+| `max_revisions` | Revision rounds dispatched after a review rejection |
 | `max_escalations` | Bounded switch to a configured strong profile |
 | `max_budget_usd` | A **soft** cap, enforced only when both input and output token rates are configured. Not a hard limit — see below. |
 

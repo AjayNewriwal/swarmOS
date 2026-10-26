@@ -38,3 +38,11 @@ class PlannerAgent(Agent[PlannerInput, Plan]):
     input_model = PlannerInput
     output_model = Plan
     system = SYSTEM
+
+    def summarize(self, output: Plan) -> dict[str, object]:
+        return {
+            "kind": "plan",
+            "steps": [step.id for step in output.steps],
+            "step_count": len(output.steps),
+            "assumptions": [self._clip(item) for item in output.assumptions[:3]],
+        }

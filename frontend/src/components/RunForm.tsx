@@ -162,7 +162,7 @@ export function RunForm({
             />
           </label>
           <label className="field compact">
-            <span>Max review rounds</span>
+            <span>Max revision rounds</span>
             <input
               type="number"
               min={0}

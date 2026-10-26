@@ -52,6 +52,11 @@ class Agent(Generic[InputT, OutputT]):
     output_model: type[OutputT]
     system: str
 
+    # Longest string kept from a single output field in a persisted summary.
+    summary_char_limit: int = 300
+    # Most findings kept in a persisted review summary.
+    summary_finding_limit: int = 10
+
     def build_request(
         self, payload: InputT, model: str, repair_note: str | None = None
     ) -> ModelRequest:
@@ -81,3 +86,18 @@ class Agent(Generic[InputT, OutputT]):
             return self.output_model.model_validate(extract_json_object(text))
         except ValidationError as exc:
             raise AgentOutputError(f"typed output rejected: {exc.errors()[:3]}") from exc
+
+    def summarize(self, output: OutputT) -> dict[str, object]:
+        """A concise, persistable summary of what this agent produced.
+
+        Only the agent's own conclusions are kept: never the prompt, never file
+        contents, and every string is truncated. This is what makes a run
+        auditable after the workspace is gone.
+        """
+        return {}
+
+    def _clip(self, value: str | None) -> str:
+        text = (value or "").strip()
+        if len(text) <= self.summary_char_limit:
+            return text
+        return text[: self.summary_char_limit] + "… (truncated)"

@@ -107,7 +107,7 @@ Steps are dispatched only when all of `depends_on` are complete, so every `Send`
 | Coder answers for a different step | Attempt fails; treated as invalid output |
 | Two independent steps write the same file | Both writes rejected as a conflict; retry/escalation or fail |
 | Reviewer requests changes | Revision rounds up to `max_revisions` |
-| Reviewer still rejects after the limit | `completed_with_findings` (changes exist, not approved) |
+| Reviewer still rejects after the limit | `completed_with_findings` with a diagnostic verification result; the changes are not approved |
 | Verification fails | Repair rounds up to `max_retries`, then fail |
 | Ledger refuses a call | `budget_exceeded` or `limit_exceeded` |
 | Unexpected graph exception | `failed`, with the exception recorded in the trace |
