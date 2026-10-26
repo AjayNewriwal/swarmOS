@@ -1,0 +1,3 @@
+{"id":"fixture_01","category":"coding","goal":"Implement tag normalization so the failing tests in tests/test_target.py pass."}
+{"id":"fixture_02","category":"coding","goal":"Add a documented normalize_tags implementation and explain the change in docs/change-notes.md."}
+{"id":"fixture_03","category":"coding","goal":"Repair the intentional stub in target.py and verify the behaviour with the existing test suite."}
