@@ -26,14 +26,18 @@ SAMPLE_PLAN = Plan(
             title="Implement normalize_tags in target.py",
             detail=(
                 "Implement normalize_tags in target.py. It must trim whitespace, "
-                "lowercase, drop empty entries, deduplicate, and sort. Return the "
-                "complete file. tests/test_target.py is read-only and must not be "
-                "modified."
+                "lowercase, drop empty entries, deduplicate, and sort ascending. "
+                "You MUST return sorted(...): "
+                "return sorted({tag.strip().lower() for tag in tags if tag.strip()}). "
+                "Do NOT return list(set(...)): set iteration order is not sorted. "
+                "Return the complete target.py file. tests/test_target.py is "
+                "read-only and must not be modified."
             ),
             acceptance_criteria=[
                 "python -m pytest -q reports 3 passed",
                 "tests/test_target.py is unchanged",
                 "normalize_tags trims, lowercases, drops blanks, deduplicates, and sorts",
+                "the returned list is sorted ascending, not merely deduplicated",
             ],
             depends_on=[],
             target_files=["target.py"],

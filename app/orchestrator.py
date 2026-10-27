@@ -46,6 +46,7 @@ from app.models import (
     utc_now,
 )
 from app.providers.base import ModelUnavailableError
+from app.review_evidence import validate_review
 from app.runtime.limits import LimitExceeded
 from app.runtime.runtime import RunRuntime
 from app.runtime.workspace import Workspace
@@ -489,6 +490,52 @@ class Orchestrator:
 
         review = result.output
         updates["review"] = review
+        evidence = validate_review(
+            review,
+            acceptance_criteria=[
+                criterion
+                for step in plan.steps
+                for criterion in step.acceptance_criteria
+            ],
+            files=payload.files,
+        )
+        if review.verdict == "request_changes" and evidence.is_invalid_rejection:
+            # The rejection rests entirely on blockers with no minimum evidence.
+            # Do not approve and do not dispatch a revision: there is nothing
+            # actionable to send back to the coder. The run ends in an explicit
+            # non-approval state instead of a normal "changes requested" outcome.
+            self.runtime.emit(
+                "failure",
+                "Review rejected without substantiated evidence",
+                findings=[
+                    check.finding.model_dump(mode="json")
+                    for check in evidence.unsupported_blockers
+                ],
+                missing=[
+                    {
+                        "step_id": check.finding.step_id,
+                        "file": check.finding.file,
+                        "missing": list(check.missing),
+                    }
+                    for check in evidence.unsupported_blockers
+                ],
+                note=(
+                    "Evidence-shape check only. It does not judge whether the code "
+                    "is correct, and it never turns a rejection into approval."
+                ),
+            )
+            updates.update(
+                status="review_invalid",
+                error=(
+                    "Review requested changes but no blocker finding supplied the "
+                    "minimum evidence (a code reference or line, a named acceptance "
+                    "criterion, and expected/actual behaviour where applicable). "
+                    "The review is invalid, not an approval."
+                ),
+                stage="done",
+            )
+            return updates
+
         if review.verdict == "request_changes":
             rejections = int(state.get("review_rejections", 0) or 0) + 1
             updates["review_rejections"] = rejections
@@ -585,6 +632,9 @@ class Orchestrator:
         elif state.get("status") in {"failed", *_HALTING} and state.get("error"):
             status = state["status"]
             error = state.get("error")
+        elif state.get("status") == "review_invalid":
+            status = "review_invalid"
+            error = state.get("error")
         elif unresolved:
             status = "failed"
             error = "; ".join(
@@ -607,7 +657,7 @@ class Orchestrator:
         # diagnostic verification instead: it records ground truth without
         # approving the changes, changing the status, or re-entering coding.
         diagnostic = False
-        if status == "completed_with_findings" and verification is None:
+        if status in {"completed_with_findings", "review_invalid"} and verification is None:
             verification = self._diagnostic_verification()
             diagnostic = True
 
@@ -747,7 +797,7 @@ class Orchestrator:
         return "review"
 
     def _after_review(self, state: SwarmState):
-        if self._halted(state) or state.get("status") == "failed":
+        if self._halted(state) or state.get("status") in {"failed", "review_invalid"}:
             return "finalize"
         review = state.get("review")
         if review is None:

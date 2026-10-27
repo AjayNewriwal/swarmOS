@@ -21,6 +21,7 @@ RunStatus = Literal[
     "running",
     "completed",
     "completed_with_findings",
+    "review_invalid",
     "failed",
     "budget_exceeded",
     "limit_exceeded",
