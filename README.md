@@ -113,7 +113,15 @@ Check reachability and whether your model id is actually present, without runnin
 swarmos doctor
 ```
 
-Then:
+Then run the constrained demo:
+
+```bash
+swarmos demo --provider openai
+```
+
+`swarmos demo` uses the canonical `sample_tag_normalization` recipe: one step, `target.py` only, and `tests/test_target.py` is read-only. The plan is supplied by the recipe, so the **planner model is skipped** and the trace says so. The **coder, reviewer, and verifier still run for real**, and verification executes the existing three tests with `python -m pytest -q`. Limits are 6 agent calls, 0 retries, 1 revision, 0 escalations, and the existing 120-second wall clock. Use `--provider demo` for the same recipe with the deterministic fixture.
+
+For an unconstrained task:
 
 ```bash
 swarmos run "Implement tag normalization so the failing tests pass" --provider openai \

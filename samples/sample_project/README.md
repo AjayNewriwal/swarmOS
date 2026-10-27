@@ -16,3 +16,22 @@ temporary workspace.
 Anything you learn from a demo run about *orchestration* is real: routing,
 parallel fan-out, retries, budget accounting, and the trace. What is simulated
 is the model's reasoning.
+
+## Constrained local-model demo
+
+`swarmos demo --provider openai` runs this workspace through the
+`sample_tag_normalization` recipe:
+
+- **Plan:** one step, supplied by the recipe, targeting only `target.py`.
+  The planner model is skipped, and the trace records
+  `plan_seeded` with `planner_skipped: true`.
+- **Coding, review, verification:** real. The coder proposes the file,
+  the reviewer inspects it, and `python -m pytest -q` runs the three tests.
+- **Read-only:** `tests/test_target.py`. Any attempted write to it (or to
+  any path other than `target.py`) is rejected before changes are applied.
+- **Limits:** 6 agent calls, 0 retries, 1 revision, 0 escalations,
+  120-second wall clock.
+
+The offline demo-provider path (`swarmos run ... --provider demo`) still uses
+its three-step fixture plan. This recipe exists because a small local model can
+be slow and may otherwise add steps, edit tests, or trigger a revision cycle.

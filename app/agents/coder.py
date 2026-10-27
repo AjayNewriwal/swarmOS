@@ -21,6 +21,8 @@ Return ONLY a JSON object with this shape:
 Rules:
 - `content` must be the complete file after the change, not a diff.
 - `path` must be relative to the workspace root. Never use absolute paths or `..`.
+- If `allowed_files` is non-empty, you may modify only those paths.
+- Never modify a path listed in `read_only_files`; tests are often read-only.
 - Only touch files needed by this step. Prefer the step's target_files.
 - If the step requires no file change, return an empty `changes` list.
 - Do not claim to have run commands or tests; you cannot execute anything.

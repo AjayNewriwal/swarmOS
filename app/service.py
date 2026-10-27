@@ -6,6 +6,7 @@ import asyncio
 import time
 
 from app.config import Settings
+from app.demo_tasks import DemoTask, DemoTaskError, resolve_demo_task
 from app.models import Limits, RunRecord, RunRequest, utc_now
 from app.orchestrator import Orchestrator
 from app.providers import resolve_provider
@@ -22,6 +23,19 @@ def _provider_kind(provider_name: str, settings: Settings) -> str:
     if provider_name.endswith(":remote"):
         return "remote"
     return settings.provider_kind if settings.openai_configured else "unknown"
+
+
+def _demo_limits(requested: Limits, recipe: Limits) -> Limits:
+    """The recipe is a ceiling for its demo: callers may lower it, never raise it."""
+    return Limits(
+        max_agent_calls=min(requested.max_agent_calls, recipe.max_agent_calls),
+        max_budget_usd=min(requested.max_budget_usd, recipe.max_budget_usd),
+        max_wall_seconds=min(requested.max_wall_seconds, recipe.max_wall_seconds),
+        max_retries=min(requested.max_retries, recipe.max_retries),
+        max_revisions=min(requested.max_revisions, recipe.max_revisions),
+        max_escalations=min(requested.max_escalations, recipe.max_escalations),
+        parallel_coding=requested.parallel_coding,
+    )
 
 
 class RunService:
@@ -62,31 +76,43 @@ class RunService:
             parallel_coding=requested.parallel_coding,
         )
 
-    def prepare(self, request: RunRequest) -> tuple[RunRecord, Provider, str]:
+    def prepare(self, request: RunRequest) -> tuple[RunRecord, Provider, str, DemoTask | None]:
+        demo = resolve_demo_task(request.demo_task) if request.demo_task else None
+        if demo is not None and request.files:
+            raise DemoTaskError(
+                "demo_task runs the bundled sample project and does not accept custom files"
+            )
         provider, provider_name, warning = resolve_provider(
             self.effective_provider(request.provider), self.settings
         )
         policy = self.resolve_policy(request.model_policy)
+        limits = (
+            self.clamp_limits(_demo_limits(request.limits, demo.limits), policy)
+            if demo is not None
+            else self.clamp_limits(request.limits, policy)
+        )
         record = RunRecord(
-            goal=request.goal,
+            goal=demo.goal if demo is not None else request.goal,
             provider=provider_name,
             provider_kind=_provider_kind(provider_name, self.settings),
             provider_warning=warning,
-            limits=self.clamp_limits(request.limits, policy),
+            limits=limits,
             model_policy=policy,
             monetary_enforced=self.settings.monetary_enforced,
             status="queued",
         )
         self.store.save_run(record)
-        return record, provider, policy
+        return record, provider, policy, demo
 
     async def run_request(self, request: RunRequest) -> RunRecord:
-        record, provider, policy = self.prepare(request)
-        return await self.execute(record, provider, request.files, policy)
+        record, provider, policy, demo = self.prepare(request)
+        return await self.execute(record, provider, request.files, policy, demo)
 
     def submit(self, request: RunRequest) -> RunRecord:
-        record, provider, policy = self.prepare(request)
-        task = asyncio.create_task(self.execute(record, provider, request.files, policy))
+        record, provider, policy, demo = self.prepare(request)
+        task = asyncio.create_task(
+            self.execute(record, provider, request.files, policy, demo)
+        )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return record
@@ -97,6 +123,7 @@ class RunService:
         provider: Provider,
         files: dict[str, str],
         policy: str | None = None,
+        demo: DemoTask | None = None,
     ) -> RunRecord:
         running = record.model_copy(update={"status": "running", "updated_at": utc_now()})
         self.store.save_run(running)
@@ -110,8 +137,20 @@ class RunService:
             provider_warning=record.provider_warning,
             store=self.store,
             model_policy=policy or record.model_policy,
+            demo_task=demo.id if demo is not None else None,
+            seeded_plan=demo.plan if demo is not None else None,
+            allowed_files=(
+                frozenset(demo.allowed_files) if demo is not None else None
+            ),
+            read_only_files=(
+                frozenset(demo.read_only_files)
+                if demo is not None
+                else frozenset()
+            ),
         )
-        runtime.seed_workspace(files, self.settings.sample_project)
+        runtime.seed_workspace(
+            {} if demo is not None else files, self.settings.sample_project
+        )
         started = time.perf_counter()
         try:
             result = await Orchestrator(runtime).run(running)

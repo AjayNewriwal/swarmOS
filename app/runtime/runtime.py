@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 from app.config import ModelProfile, Settings
-from app.models import Limits, ModelTier, TraceEvent, TraceKind
+from app.models import Limits, ModelTier, Plan, TraceEvent, TraceKind
 from app.providers.base import ModelUnavailableError, Provider
 from app.runtime.limits import BudgetLedger
 from app.runtime.trace import TraceRecorder
@@ -33,6 +33,10 @@ class RunRuntime:
         provider_warning: str | None,
         store: object | None = None,
         model_policy: str | None = None,
+        demo_task: str | None = None,
+        seeded_plan: Plan | None = None,
+        allowed_files: frozenset[str] | None = None,
+        read_only_files: frozenset[str] = frozenset(),
     ) -> None:
         self.run_id = run_id
         self.settings = settings
@@ -40,6 +44,10 @@ class RunRuntime:
         self.provider = provider
         self.provider_name = provider_name
         self.provider_warning = provider_warning
+        self.demo_task = demo_task
+        self.seeded_plan = seeded_plan
+        self.allowed_files = allowed_files
+        self.read_only_files = read_only_files
         policy = (model_policy or settings.model_policy or "config").strip().lower()
         self.model_policy = policy if policy in VALID_POLICIES else "config"
         self.ledger = BudgetLedger(

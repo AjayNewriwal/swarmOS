@@ -139,3 +139,24 @@ def test_openai_provider_without_config_is_a_400(client):
     )
     assert response.status_code == 400
     assert "OPENAI_COMPAT" in response.json()["detail"]
+
+
+def test_demo_task_rejects_custom_files(client):
+    response = client.post(
+        "/api/runs?wait=true",
+        json={
+            "goal": GOAL,
+            "demo_task": "sample_tag_normalization",
+            "files": {"target.py": "custom"},
+        },
+    )
+    assert response.status_code == 400
+    assert "does not accept custom files" in response.json()["detail"]
+
+
+def test_unknown_demo_task_is_a_validation_error(client):
+    response = client.post(
+        "/api/runs",
+        json={"goal": GOAL, "demo_task": "not_a_task"},
+    )
+    assert response.status_code == 422

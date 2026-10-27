@@ -151,10 +151,12 @@ class Orchestrator:
         return self.runtime.settings.provider_kind
 
     def _models_by_role(self) -> dict[str, str]:
-        models = {
-            role: self.runtime.selection_for_role(role).model
-            for role in ("planner", "coder", "reviewer")
-        }
+        if self.runtime.seeded_plan is not None:
+            models = {"planner": "skipped (demo recipe)"}
+        else:
+            models = {"planner": self.runtime.selection_for_role("planner").model}
+        for role in ("coder", "reviewer"):
+            models[role] = self.runtime.selection_for_role(role).model
         models["verifier"] = "deterministic-subprocess"
         return models
 
@@ -201,6 +203,24 @@ class Orchestrator:
     # nodes
     # ------------------------------------------------------------------
     async def _planner(self, state: SwarmState) -> dict:
+        if self.runtime.seeded_plan is not None:
+            plan = self.runtime.seeded_plan
+            self.runtime.emit(
+                "routing_decision",
+                "Plan supplied by the demo task recipe; planner model skipped",
+                decision="plan_seeded",
+                planner_skipped=True,
+                recipe=self.runtime.demo_task,
+                steps=[step.id for step in plan.steps],
+                waves=[[step.id for step in wave] for wave in plan.waves()],
+                assumptions=plan.assumptions,
+            )
+            return {
+                "plan": plan,
+                "workspace": self.runtime.workspace.snapshot(),
+                "stage": "coding",
+            }
+
         limits = self.runtime.limits
         self.runtime.emit(
             "routing_decision",
@@ -257,6 +277,8 @@ class Orchestrator:
             files=state.get("files", {}),
             review_findings=findings,
             verification_stdout=state.get("verification_stdout", ""),
+            allowed_files=sorted(self.runtime.allowed_files or []),
+            read_only_files=sorted(self.runtime.read_only_files),
         )
 
         checkout_dir = self.runtime.step_root / state["workspace_subdir"]
@@ -312,6 +334,32 @@ class Orchestrator:
             change.model_copy(update={"step_id": step.id})
             for change in result.output.changes
         ]
+        disallowed = [
+            change.path for change in changes if not self._path_allowed(change.path)
+        ]
+        if disallowed:
+            allowed = sorted(self.runtime.allowed_files or [])
+            read_only = sorted(self.runtime.read_only_files)
+            self.runtime.emit(
+                "failure",
+                "Rejected a coder write outside the allowed files",
+                step_id=step.id,
+                paths=disallowed,
+                allowed=allowed,
+                read_only=read_only,
+            )
+            updates["failures"] = [
+                StepFailure(
+                    step_id=step.id,
+                    stage="coding",
+                    error=(
+                        f"disallowed write(s): {', '.join(disallowed)}; "
+                        f"allowed={allowed or 'all'}, read_only={read_only or 'none'}"
+                    ),
+                    attempts=attempt,
+                )
+            ]
+            return updates
         if len(changes) > _MAX_FILES_PER_STEP:
             updates["failures"] = [
                 StepFailure(
@@ -838,6 +886,14 @@ class Orchestrator:
 
     def _attempts(self, state: SwarmState, step_id: str) -> int:
         return int((state.get("attempts") or {}).get(step_id, 0) or 0)
+
+    def _path_allowed(self, path: str) -> bool:
+        """Enforce request-scoped write restrictions before any change is applied."""
+        if self.runtime.allowed_files is None:
+            return True
+        if path in self.runtime.read_only_files:
+            return False
+        return path in self.runtime.allowed_files
 
     def _can_escalate(self, state: SwarmState) -> bool:
         return (

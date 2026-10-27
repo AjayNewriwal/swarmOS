@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from app.config import settings as base_settings
+from app.demo_tasks import resolve_demo_task
 from app.models import Limits, RunRecord
 from app.orchestrator import Orchestrator
 from app.providers.base import ModelRequest, ModelResponse
@@ -162,8 +163,15 @@ def build_run(tmp_path):
         files: dict[str, str] | None = None,
         use_sample: bool = False,
         store=None,
+        demo_task: str | None = None,
         **settings_overrides,
     ):
+        demo = resolve_demo_task(demo_task) if demo_task else None
+        if demo is not None:
+            goal = demo.goal
+            limits = limits or demo.limits
+            files = {}
+            use_sample = True
         limits = limits or Limits()
         settings = make_settings(tmp_path, **settings_overrides)
         record = RunRecord(goal=goal, limits=limits)
@@ -175,6 +183,14 @@ def build_run(tmp_path):
             provider_name=provider.name,
             provider_warning=None,
             store=store,
+            demo_task=demo.id if demo is not None else None,
+            seeded_plan=demo.plan if demo is not None else None,
+            allowed_files=(
+                frozenset(demo.allowed_files) if demo is not None else None
+            ),
+            read_only_files=(
+                frozenset(demo.read_only_files) if demo is not None else frozenset()
+            ),
         )
         sample = settings.sample_project if use_sample else tmp_path / "missing-sample"
         if files is None:

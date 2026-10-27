@@ -17,6 +17,7 @@ from app.benchmark import (
     write_results,
 )
 from app.config import settings
+from app.demo_tasks import SAMPLE_GOAL, SAMPLE_LIMITS, SAMPLE_TASK_ID
 from app.models import Limits, RunRequest
 from app.providers import resolve_provider
 from app.providers.base import ProbeableProvider, ProviderConfigError, ProviderError
@@ -93,6 +94,36 @@ def _cmd_run(args: argparse.Namespace) -> int:
     else:
         _print_run(record)
     return 0 if record.status in {"completed", "completed_with_findings"} else 1
+
+
+def _cmd_demo(args: argparse.Namespace) -> int:
+    """Run the constrained sample demo with a canonical one-step plan."""
+    service, store = _service(args.db)
+    request = RunRequest(
+        goal=SAMPLE_GOAL,
+        provider=args.provider,
+        demo_task=SAMPLE_TASK_ID,
+        limits=SAMPLE_LIMITS,
+    )
+    try:
+        record = asyncio.run(service.run_request(request))
+        events = (
+            [event.model_dump(mode="json") for event in store.get_events(record.run_id)]
+            if args.json == "events"
+            else []
+        )
+    except ProviderConfigError as exc:
+        print(f"provider configuration error: {exc}", file=sys.stderr)
+        return 2
+    finally:
+        store.close()
+    if args.json:
+        print(record.model_dump_json(indent=2))
+        if events:
+            print(json.dumps(events, indent=2))
+    else:
+        _print_run(record)
+    return 0 if record.status == "completed" else 1
 
 
 def _cmd_trace(args: argparse.Namespace) -> int:
@@ -281,6 +312,13 @@ def build_parser() -> argparse.ArgumentParser:
     trace = sub.add_parser("trace", help="print the trace for a run")
     trace.add_argument("run_id")
     trace.set_defaults(func=_cmd_trace)
+
+    demo = sub.add_parser(
+        "demo", help="run the constrained sample_tag_normalization demo"
+    )
+    demo.add_argument("--provider", default="auto", choices=["auto", "demo", "openai"])
+    demo.add_argument("--json", nargs="?", const="record", choices=["record", "events"])
+    demo.set_defaults(func=_cmd_demo)
 
     bench = sub.add_parser("bench", help="run reproducible benchmark tasks")
     bench.add_argument(

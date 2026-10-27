@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app import __version__
 from app.config import settings
+from app.demo_tasks import DemoTaskError
 from app.models import RunDetail, RunRequest
 from app.providers import resolve_provider
 from app.providers.base import ProbeableProvider, ProviderConfigError, ProviderError
@@ -167,6 +168,8 @@ async def create_run(
         else:
             record = service.submit(request)
     except ProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except DemoTaskError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _detail(record.run_id)
 

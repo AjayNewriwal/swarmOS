@@ -59,6 +59,7 @@ class RunRequest(BaseModel):
     limits: Limits = Field(default_factory=Limits)
     provider: Literal["auto", "demo", "openai"] = "auto"
     model_policy: Literal["config", "fast_only", "adaptive", "role_routed"] | None = None
+    demo_task: Literal["sample_tag_normalization"] | None = None
     metadata: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("files")
@@ -206,6 +207,9 @@ class CodingInput(BaseModel):
     files: dict[str, str] = Field(default_factory=dict)
     review_findings: list[ReviewFinding] = Field(default_factory=list)
     verification_stdout: str = ""
+    # Request-scoped write restrictions. Empty lists mean the normal behavior.
+    allowed_files: list[str] = Field(default_factory=list)
+    read_only_files: list[str] = Field(default_factory=list)
 
 
 class CodingOutput(BaseModel):
