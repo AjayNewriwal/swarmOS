@@ -149,7 +149,7 @@ class Orchestrator:
         return RunResult(record=updated, events=list(self.runtime.trace.events), state=final)
 
     def _provider_kind(self) -> str:
-        return self.runtime.settings.provider_kind
+        return self.runtime.provider_kind
 
     def _models_by_role(self) -> dict[str, str]:
         if self.runtime.seeded_plan is not None:
@@ -499,14 +499,40 @@ class Orchestrator:
             ],
             files=payload.files,
         )
-        if review.verdict == "request_changes" and evidence.is_invalid_rejection:
-            # The rejection rests entirely on blockers with no minimum evidence.
-            # Do not approve and do not dispatch a revision: there is nothing
-            # actionable to send back to the coder. The run ends in an explicit
-            # non-approval state instead of a normal "changes requested" outcome.
+        if review.verdict == "request_changes" and evidence.is_malformed:
+            # Malformed output, not a normal rejection: the reviewer asked for
+            # changes but named no finding, so there is nothing to send back and
+            # nothing to test. The run cannot be approved, and it cannot be
+            # treated as a "changes requested" outcome either.
             self.runtime.emit(
                 "failure",
-                "Review rejected without substantiated evidence",
+                "Review requested changes without naming a single finding",
+                reason="malformed_review",
+                findings=[],
+                note=(
+                    "Malformed reviewer output: a rejection must name at least "
+                    "one finding. This is not an approval."
+                ),
+            )
+            updates.update(
+                status="review_invalid",
+                error=(
+                    "Review requested changes but returned no findings, so there "
+                    "is nothing to act on. The review is invalid, not an approval."
+                ),
+                stage="done",
+            )
+            return updates
+
+        if evidence.unsupported_blockers:
+            # Advisory only. The evidence check inspects the *shape* of a
+            # finding; it cannot decide that a defect is unreal, so it must not
+            # change the verdict, skip the revision budget, or alter the final
+            # status. The gaps are recorded for auditing the reviewer.
+            self.runtime.emit(
+                "failure",
+                "Review blockers carry less than the minimum evidence (verdict unchanged)",
+                reason="evidence_gap",
                 findings=[
                     check.finding.model_dump(mode="json")
                     for check in evidence.unsupported_blockers
@@ -521,20 +547,10 @@ class Orchestrator:
                 ],
                 note=(
                     "Evidence-shape check only. It does not judge whether the code "
-                    "is correct, and it never turns a rejection into approval."
+                    "is correct, does not change the verdict, and never turns a "
+                    "rejection into approval."
                 ),
             )
-            updates.update(
-                status="review_invalid",
-                error=(
-                    "Review requested changes but no blocker finding supplied the "
-                    "minimum evidence (a code reference or line, a named acceptance "
-                    "criterion, and expected/actual behaviour where applicable). "
-                    "The review is invalid, not an approval."
-                ),
-                stage="done",
-            )
-            return updates
 
         if review.verdict == "request_changes":
             rejections = int(state.get("review_rejections", 0) or 0) + 1
@@ -602,6 +618,17 @@ class Orchestrator:
             return {"status": "failed", "error": message, "stage": "done"}
 
         escalations = int(state.get("escalations", 0) or 0) + 1
+        verification = state.get("verification")
+        review = state.get("review")
+        unresolved = self._unresolved_failures(state)
+        if verification is not None and not verification.passed:
+            trigger = "verification_failed"
+        elif review is not None and review.verdict == "request_changes":
+            trigger = "revision_budget_exhausted"
+        elif unresolved:
+            trigger = "coding_failures_exhausted_retries"
+        else:
+            trigger = "unclassified"
         self.runtime.emit(
             "escalation",
             f"Escalating to the strong model (round {escalations})",
@@ -609,10 +636,11 @@ class Orchestrator:
             to_tier="strong",
             available=True,
             round=escalations,
+            # Machine-readable reason, so an evaluation can separate escalation
+            # after a coding failure, a rejection, or a failed verification.
+            trigger=trigger,
             model=self.runtime.selection_for_tier("strong").model,
-            unresolved=list(
-                dict.fromkeys(f.step_id for f in self._unresolved_failures(state))
-            ),
+            unresolved=list(dict.fromkeys(f.step_id for f in unresolved)),
         )
         return {
             "model_tier": "strong",
@@ -946,8 +974,13 @@ class Orchestrator:
         return path in self.runtime.allowed_files
 
     def _can_escalate(self, state: SwarmState) -> bool:
+        # ``fast_only`` pins every role to the fast profile. The service also
+        # clamps max_escalations to zero, but routing must enforce the policy on
+        # its own: a directly constructed runtime must not be able to escalate
+        # out of a policy that promises it cannot.
         return (
-            state.get("model_tier", "fast") == "fast"
+            self.runtime.model_policy != "fast_only"
+            and state.get("model_tier", "fast") == "fast"
             and self.runtime.escalation_available
             and int(state.get("escalations", 0) or 0) < self.runtime.limits.max_escalations
         )

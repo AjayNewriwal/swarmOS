@@ -222,7 +222,7 @@ class Workspace:
 
     # -- verification -----------------------------------------------------
     def run_command(self, command: str, timeout_seconds: int) -> VerificationResult:
-        argv = shlex.split(command, posix=False)
+        argv = _split_command(command)
         if not argv:
             return self._execution_failure(command, "verification command is empty")
         if not self.execution_enabled:
@@ -339,6 +339,40 @@ class Workspace:
         env["NO_COLOR"] = "1"
         env["PYTHONHASHSEED"] = "0"
         return env
+
+
+def _unquote(token: str) -> str:
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in {"'", '"'}:
+        return token[1:-1]
+    return token
+
+
+def _looks_like_path(token: str) -> bool:
+    return "/" in token or "\\" in token
+
+
+def _split_command(command: str) -> list[str]:
+    """Split a verification command, keeping a spaced executable path whole.
+
+    On Windows an executable path is routinely unquoted even though it contains
+    spaces (``C:\\Program Files\\Python312\\python.exe -m pytest``). ``shlex``
+    splits that into ``["C:\\Program", "Files\\..."]``, so the command name was
+    read as ``program``. Re-join the leading tokens only while they still form an
+    existing file, and strip surrounding quotes so quoted and unquoted paths
+    resolve identically. Re-joining never widens the allowlist: the resolved
+    basename is still checked against it before anything runs.
+    """
+    tokens = [_unquote(token) for token in shlex.split(command, posix=False)]
+    if not tokens:
+        return tokens
+    if os.path.isfile(tokens[0]) or not _looks_like_path(tokens[0]):
+        return tokens
+    candidate = tokens[0]
+    for index in range(1, len(tokens)):
+        candidate = f"{candidate} {tokens[index]}"
+        if os.path.isfile(candidate):
+            return [candidate, *tokens[index + 1 :]]
+    return tokens
 
 
 def _count(pattern: re.Pattern[str], text: str) -> int:

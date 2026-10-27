@@ -175,6 +175,46 @@ def test_model_profile_priced_requires_both_rates():
     assert ModelProfile("fast", FAST, 1.0, 1.0).priced is True
 
 
+async def test_fast_only_cannot_escalate_when_limits_are_constructed_directly(build_run):
+    """RunService clamps escalations for fast_only; routing must enforce it too."""
+
+    def handler(request, index):
+        if request.role == "planner":
+            return plan_response(SINGLE_STEP_PLAN)
+        if request.role == "coder":
+            return coder_response("solo")
+        return review_response(
+            "request_changes",
+            [
+                {
+                    "severity": "blocker",
+                    "step_id": "solo",
+                    "file": "out/solo.txt",
+                    "message": "still wrong",
+                }
+            ],
+        )
+
+    provider = ScriptedProvider(handler)
+    orchestrator, _, record = build_run(
+        provider,
+        files=SEED_OK,
+        limits=Limits(max_retries=0, max_revisions=0, max_escalations=1),
+        base_url="http://127.0.0.1:11434/v1",
+        fast_model=FAST,
+        strong_model=STRONG,
+        model_policy="fast_only",
+        retry_backoff_seconds=0,
+    )
+    result = await orchestrator.run(record)
+
+    # The policy promises no escalation, so the rejection stands un-escalated.
+    assert result.record.status == "completed_with_findings"
+    assert result.record.escalations == 0
+    assert {call.model for call in provider.calls} == {FAST}
+    assert not [event for event in result.events if event.kind == "escalation"]
+
+
 async def test_escalation_is_reported_unavailable_instead_of_faked(build_run):
     def handler(request, index):
         if request.role == "planner":

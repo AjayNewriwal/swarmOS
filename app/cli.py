@@ -10,11 +10,21 @@ from pathlib import Path
 
 from app.benchmark import (
     POLICIES,
+    build_report,
     load_tasks,
+    render_markdown,
     request_for,
     result_from_run,
     summarise,
+    write_json_report,
+    write_markdown,
     write_results,
+)
+from app.benchmark_scenarios import (
+    SCENARIOS,
+    benchmark_settings,
+    run_matrix,
+    scenario_report_config,
 )
 from app.config import settings
 from app.demo_tasks import SAMPLE_GOAL, SAMPLE_LIMITS, SAMPLE_TASK_ID
@@ -25,6 +35,7 @@ from app.service import RunService
 from app.store import RunStore
 
 BENCHMARKS = Path(__file__).resolve().parent.parent / "benchmarks" / "tasks.jsonl"
+BENCH_RESULTS = Path(__file__).resolve().parent.parent / "benchmarks" / "results"
 ROLLING_POLICIES = ("fixed-fast", "adaptive", "multi-agent")
 
 
@@ -142,6 +153,8 @@ def _cmd_trace(args: argparse.Namespace) -> int:
 
 
 def _cmd_bench(args: argparse.Namespace) -> int:
+    if args.suite == "scenarios":
+        return _cmd_bench_scenarios(args)
     service, store = _service(args.db)
     _warn_zero_budget(args.provider)
     tasks = load_tasks(BENCHMARKS)
@@ -199,6 +212,71 @@ def _cmd_bench(args: argparse.Namespace) -> int:
         write_results(Path(args.out), results)
         print(f"\nwrote {len(results)} result(s) to {args.out}")
     return exit_code
+
+
+def _cmd_bench_scenarios(args: argparse.Namespace) -> int:
+    """Run the deterministic scenario matrix against the scripted provider.
+
+    By default the store is in-memory and the provider is scripted, so this never
+    touches the production database, the workspace, or a model endpoint. Pass
+    ``--bench-db`` to keep the runs inspectable.
+    """
+    bench_settings = benchmark_settings(settings)
+    policy_names = args.policy or list(ROLLING_POLICIES)
+    db_path = args.bench_db or ":memory:"
+    if db_path != ":memory:":
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    store = RunStore(db_path)
+    try:
+        results = asyncio.run(
+            run_matrix(
+                settings=bench_settings,
+                store=store,
+                scenario_ids=args.scenario or None,
+                policy_names=policy_names,
+            )
+        )
+    finally:
+        store.close()
+
+    config = scenario_report_config(
+        bench_settings,
+        policies=policy_names,
+        scenario_ids=args.scenario or None,
+        store=db_path,
+    )
+    summary = summarise(results)
+    json_path = (
+        Path(args.json_report)
+        if args.json_report
+        else BENCH_RESULTS / "policy-benchmark.json"
+    )
+    markdown_path = (
+        Path(args.markdown) if args.markdown else BENCH_RESULTS / "policy-benchmark.md"
+    )
+    write_json_report(json_path, build_report(results, suite="scripted-scenarios", config=config))
+    write_markdown(markdown_path, render_markdown(results, summary, config=config))
+
+    print(
+        f"{'task':<24} {'policy':<12} {'status':<24} {'calls':>5} {'rev':>4} "
+        f"{'rej':>4} {'gap':>4} {'ms':>7}"
+    )
+    for item in results:
+        print(
+            f"{item.task_id:<24} {item.policy:<12} {item.status:<24} "
+            f"{item.agent_calls:>5} {item.revisions:>4} "
+            f"{item.reviewer_rejections:>4} {item.evidence_gap_events:>4} "
+            f"{item.duration_ms:>7}"
+        )
+    print()
+    for warning in summary["warnings"]:
+        print(f"WARNING: {warning}")
+    print()
+    for line in summary["tradeoffs"]:
+        print(f"TRADE-OFF: {line}")
+    print(f"\nwrote {json_path}")
+    print(f"wrote {markdown_path}")
+    return 0
 
 
 def _cmd_doctor(_: argparse.Namespace) -> int:
@@ -330,6 +408,30 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--budget", type=float, default=0.0)
     bench.add_argument("--limit", type=int, default=0)
     bench.add_argument("--out", default=None, help="write JSONL results here")
+    bench.add_argument(
+        "--suite",
+        choices=["tasks", "scenarios"],
+        default="tasks",
+        help="demo tasks against a real provider, or the deterministic scripted matrix",
+    )
+    bench.add_argument(
+        "--scenario",
+        nargs="*",
+        choices=sorted(SCENARIOS),
+        default=None,
+        help="scenario ids for the scenarios suite (default: all)",
+    )
+    bench.add_argument(
+        "--json-report", default=None, help="write the JSON report here (scenarios suite)"
+    )
+    bench.add_argument(
+        "--markdown", default=None, help="write the Markdown summary here (scenarios suite)"
+    )
+    bench.add_argument(
+        "--bench-db",
+        default=None,
+        help="persist scripted runs to this SQLite file instead of memory",
+    )
     bench.set_defaults(func=_cmd_bench)
 
     doctor = sub.add_parser("doctor", help="report configuration and probe the endpoint")

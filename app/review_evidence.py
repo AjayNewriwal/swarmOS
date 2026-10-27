@@ -11,9 +11,13 @@ not, and cannot, decide whether the claim is true:
 They exist because unsupported blockers recurred with a small local model: a
 reviewer rejected correct code (run_478959ca3d86, run_9038fdabb1b9) by
 restating the acceptance criteria, and once by reporting a fabricated
-expected/actual pair. The orchestrator uses this module to avoid dispatching a
-revision for a blocker that carries no minimum evidence. It never turns an
-unsubstantiated blocker into approval.
+expected/actual pair.
+
+A finding is *not* invalid because evidence is missing. A weak finding is still
+a finding, so the rejection stands: the run keeps its request_changes verdict,
+consumes its revision budget normally, and ends as ``completed_with_findings``.
+Only a rejection that names no finding at all counts as malformed output, and
+the orchestrator records that as ``review_invalid``. Neither case is approval.
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ _MIN_CRITERION_CHARS = 15
 _LINE_REF = re.compile(r"\bline\s+\d+\b", re.IGNORECASE)
 _FILE_LINE_REF = re.compile(r"\b[\w./\\-]+\.[A-Za-z0-9]{1,6}:\d+\b")
 _BACKTICK = re.compile(r"`([^`\n]{2,})`")
-_QUOTED = re.compile(r"[\"'`]([^\"'`\n]{%d,})[\"'`]" % _MIN_CRITERION_CHARS)
+_QUOTED = re.compile(rf"[\"'`]([^\"'`\n]{{{_MIN_CRITERION_CHARS},}})[\"'`]")
 # Something expression-like inside backticks, e.g. `sorted(...)`, `x == y`, or
 # `n = 0`. A path (`tests/test_target.py`) or a bare name (`normalize_tags`) must
 # not qualify, so separators like `/`, `-`, and `*` are not enough on their own.
@@ -93,13 +97,16 @@ class ReviewEvidenceReport:
         return tuple(check for check in self.checks if check.is_supported)
 
     @property
-    def is_invalid_rejection(self) -> bool:
-        """A rejection that rests on nothing but unsubstantiated blockers.
+    def is_malformed(self) -> bool:
+        """True when the review carries no finding at all.
 
-        An invalid rejection must never become approval, and it must not trigger
-        a coding revision, because there is no actionable evidence to act on.
+        Combined with a ``request_changes`` verdict this is malformed output:
+        the reviewer asserts a defect but names nothing, so there is no defect
+        to route back to the coder and nothing to test. A finding whose evidence
+        is merely thin is *not* malformed; it is a real finding with weak
+        evidence, and the rejection stands.
         """
-        return bool(self.unsupported_blockers) and not self.supported_findings
+        return not self.checks
 
 
 def evaluate_finding(

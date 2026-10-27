@@ -242,6 +242,46 @@ results are not evidence that the policies are equivalent.
 
 Tasks are in `benchmarks/tasks.jsonl`; results are written to `benchmarks/results/`, which is git-ignored.
 
+### Deterministic policy scenarios
+
+The task suite above needs a provider. The scenario suite does not: it drives the
+real orchestrator with a scripted provider, an in-memory database, and the
+bundled fixture, so a matrix run is reproducible and needs no API key or network.
+
+```bash
+swarmos bench --suite scenarios
+swarmos bench --suite scenarios --policy fixed-fast adaptive \
+  --scenario first_try_success revision_required escalation_recovery \
+  --json-report benchmarks/results/policy-benchmark.json \
+  --markdown benchmarks/results/policy-benchmark.md
+```
+
+The seventeen scenarios cover first-attempt success, a revision round, a genuine
+blocker, insufficient reviewer evidence, a malformed review, malformed planner,
+coder, and reviewer output, a transient provider timeout, a verification
+failure, a verification timeout, disabled execution, escalation recovery, the
+escalation limit, unavailable escalation, the revision limit, and the call
+limit. Each is run under `fixed-fast`, `adaptive`, and `multi-agent`.
+`docs/evaluation.md` lists every scenario's expected status, verification
+behaviour, review behaviour, and budget constraint.
+
+Per run the harness records the outcome, planner/coder/reviewer call counts,
+revision rounds, reviewer rejections, invalid reviews, evidence-gap events,
+verification attempts, exit code and result, escalations, denied calls,
+wall-clock time, and token/cost figures **only when the provider reports them**.
+Unreported tokens and costs are written as `null`, never as zero.
+
+The JSON report keeps `task_id`, `policy`, `run_id`, and a stable configuration
+fingerprint so repeated runs can be compared; the Markdown summary carries the
+per-task table, per-policy aggregates, denominators, failures, limit exhaustion,
+run identifiers, and trade-off statements derived from the measurements.
+Neither output declares a winner. Add `--bench-db benchmarks/results/scenarios.db`
+to keep the runs inspectable in the dashboard.
+
+> The scripted provider simulates model *behaviour*. These numbers measure
+> orchestration cost and policy behaviour, not the quality of any real model.
+> `docs/evaluation.md` documents the controlled real-model procedure.
+
 ## Tests
 
 ```bash

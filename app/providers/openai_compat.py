@@ -255,12 +255,11 @@ class OpenAICompatibleProvider:
             return 0, 0, False
         prompt = usage.get("prompt_tokens", usage.get("prompt_eval_count"))
         completion = usage.get("completion_tokens", usage.get("eval_count"))
-        available = isinstance(prompt, int) or isinstance(completion, int)
-        return (
-            prompt if isinstance(prompt, int) else 0,
-            completion if isinstance(completion, int) else 0,
-            available,
-        )
+        # Only a complete pair is usable: reporting one half as zero would make a
+        # partial usage block look measured and understate the cost.
+        if not (isinstance(prompt, int) and isinstance(completion, int)):
+            return 0, 0, False
+        return prompt, completion, True
 
     @staticmethod
     def _classify(response: httpx.Response) -> ProviderError:
@@ -281,6 +280,10 @@ class OpenAICompatibleProvider:
             return ProviderNotFoundError(
                 f"not found (HTTP 404); check the base URL and model id: {body}",
                 status_code=status,
+            )
+        if status == 408:
+            return ProviderTimeoutError(
+                f"provider timed out (HTTP 408): {body}", status_code=status
             )
         if status in {400, 422}:
             return ProviderBadRequestError(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.models import Limits
+from app.providers.base import ProviderError
 from app.runtime.limits import (
     BudgetExceeded,
     BudgetLedger,
@@ -122,3 +123,28 @@ async def test_run_halts_at_call_limit(build_run):
     assert result.record.status == "limit_exceeded"
     assert runtime.ledger.calls == 2
     assert any(event.kind == "budget" for event in result.events)
+
+
+async def test_a_retry_is_a_ledger_call_and_is_refused_at_the_call_limit(build_run):
+    """A retry must not be able to escape the call budget."""
+    attempts = {"count": 0}
+
+    def handler(request, index):
+        if request.role == "planner":
+            attempts["count"] += 1
+            raise ProviderError("overloaded", category="server", retryable=True)
+        return review_response()
+
+    provider = ScriptedProvider(handler)
+    orchestrator, runtime, record = build_run(
+        provider,
+        limits=Limits(max_agent_calls=1, max_retries=1, max_escalations=0),
+        retry_backoff_seconds=0,
+    )
+    result = await orchestrator.run(record)
+
+    # The first attempt spent the only call; the retry was refused, not hidden.
+    assert attempts["count"] == 1
+    assert result.record.status == "limit_exceeded"
+    assert runtime.ledger.calls == 1
+    assert runtime.ledger.denied == 1

@@ -104,6 +104,18 @@ async def test_missing_usage_is_reported_not_invented():
     assert result.usage_available is False
 
 
+async def test_partial_usage_is_unavailable_not_half_measured():
+    # A missing completion count must not be reported as a measured zero, which
+    # would understate cost and make the metric look available.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=completion(usage={"prompt_tokens": 12}))
+
+    result = await provider_with(handler).complete(request())
+
+    assert (result.input_tokens, result.output_tokens) == (0, 0)
+    assert result.usage_available is False
+
+
 async def test_list_content_parts_are_joined():
     def handler(request: httpx.Request) -> httpx.Response:
         body = completion()
@@ -201,6 +213,17 @@ async def test_bad_request_without_json_hint_fails_fast():
 async def test_timeout_is_classified():
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("too slow", request=request)
+
+    with pytest.raises(ProviderTimeoutError) as info:
+        await provider_with(handler).complete(request())
+
+    assert info.value.retryable is True
+
+
+async def test_http_timeout_status_is_classified_as_retryable():
+    # Some gateways report a timeout as HTTP 408 instead of an httpx exception.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(408, json={"error": "upstream timeout"})
 
     with pytest.raises(ProviderTimeoutError) as info:
         await provider_with(handler).complete(request())

@@ -98,11 +98,13 @@ class ScriptedProvider:
         delay: float = 0.0,
         input_tokens: int = 10,
         output_tokens: int = 10,
+        usage_available: bool = False,
     ) -> None:
         self.handler = handler
         self.delay = delay
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens
+        self.usage_available = usage_available
         self.calls: list[ModelRequest] = []
         self.in_flight = 0
         self.max_in_flight = 0
@@ -125,6 +127,7 @@ class ScriptedProvider:
                 input_tokens=self.input_tokens,
                 output_tokens=self.output_tokens,
                 latency_ms=1,
+                usage_available=self.usage_available,
             )
         finally:
             self.in_flight -= 1

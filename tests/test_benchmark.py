@@ -66,7 +66,11 @@ def test_summary_withholds_cost_when_usage_is_missing(tmp_path):
         assert all(item.status == "completed" for item in results)
         assert all(item.verification_passed for item in results)
         assert all(item.usage_available is False for item in results)
-        assert all(item.cost_usd == 0 for item in results)
+        # Unmeasured usage is unavailable, not zero: the demo provider never
+        # reports token counts, so the harness must not publish invented numbers.
+        assert all(item.cost_usd is None for item in results)
+        assert all(item.input_tokens is None for item in results)
+        assert all(item.output_tokens is None for item in results)
         assert summary["cost_comparable"] is False
         assert "withheld" in summary["cost_note"]
         assert "declared best" in summary["note"]

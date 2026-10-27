@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from app.runtime.workspace import Workspace, WorkspaceError
+from app.runtime.workspace import Workspace, WorkspaceError, _split_command
 
 
 def make_workspace(tmp_path, **kwargs) -> Workspace:
@@ -46,6 +46,41 @@ def test_allowlist_accepts_python_exe_alias(tmp_path):
     # The resolved executable name is python.exe, which normalises to python.
     assert result.exit_code == 0
     assert "ok" in result.stdout_tail
+
+
+def test_allowlist_accepts_a_quoted_path_with_spaces(tmp_path):
+    workspace = make_workspace(tmp_path, allowed_commands={"python"})
+    workspace.write("check.py", "print('quoted')\n")
+    result = workspace.run_command(f'"{sys.executable}" check.py', timeout_seconds=30)
+    assert result.exit_code == 0
+    assert "quoted" in result.stdout_tail
+
+
+def test_split_command_keeps_an_unquoted_spaced_executable_whole(tmp_path):
+    binary = tmp_path / "Program Files" / "Python312" / "python.exe"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("", encoding="utf-8")
+
+    assert _split_command(f"{binary} -m pytest -q") == [
+        str(binary),
+        "-m",
+        "pytest",
+        "-q",
+    ]
+
+
+def test_disallowed_executable_path_with_spaces_is_refused(tmp_path):
+    workspace = make_workspace(tmp_path, allowed_commands={"python"})
+    binary = tmp_path / "Program Files" / "Evil Tools" / "curl.exe"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("not a real executable", encoding="utf-8")
+
+    result = workspace.run_command(f"{binary} --version", timeout_seconds=30)
+
+    # Refused by the allowlist before any process is started.
+    assert result.passed is False
+    assert result.exit_code == 126
+    assert "not in SWARMOS_ALLOWED_COMMANDS" in result.stderr_tail
 
 
 def test_snapshot_skips_symlinks(tmp_path):

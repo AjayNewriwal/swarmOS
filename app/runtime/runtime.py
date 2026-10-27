@@ -37,6 +37,7 @@ class RunRuntime:
         seeded_plan: Plan | None = None,
         allowed_files: frozenset[str] | None = None,
         read_only_files: frozenset[str] = frozenset(),
+        provider_kind: str | None = None,
     ) -> None:
         self.run_id = run_id
         self.settings = settings
@@ -44,6 +45,7 @@ class RunRuntime:
         self.provider = provider
         self.provider_name = provider_name
         self.provider_warning = provider_warning
+        self.provider_kind = provider_kind or settings.provider_kind
         self.demo_task = demo_task
         self.seeded_plan = seeded_plan
         self.allowed_files = allowed_files

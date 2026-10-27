@@ -147,6 +147,7 @@ class RunService:
                 if demo is not None
                 else frozenset()
             ),
+            provider_kind=record.provider_kind,
         )
         runtime.seed_workspace(
             {} if demo is not None else files, self.settings.sample_project
