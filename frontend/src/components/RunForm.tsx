@@ -8,6 +8,7 @@ interface Props {
   escalationAvailable: boolean;
   busy: boolean;
   onSubmit: (input: CreateRunInput) => Promise<void>;
+  onCompare: (input: CreateRunInput) => Promise<void>;
 }
 
 const EXAMPLES = [
@@ -22,6 +23,7 @@ export function RunForm({
   escalationAvailable,
   busy,
   onSubmit,
+  onCompare,
 }: Props) {
   const [goal, setGoal] = useState(EXAMPLES[0]);
   const [provider, setProvider] = useState<"auto" | "demo" | "openai">("auto");
@@ -35,24 +37,26 @@ export function RunForm({
 
   const tooShort = goal.trim().length < 8;
 
+  const buildInput = (): CreateRunInput => ({
+    goal: goal.trim(),
+    provider,
+    model_policy: modelPolicy as CreateRunInput["model_policy"],
+    limits: {
+      max_budget_usd: budget,
+      max_agent_calls: calls,
+      max_retries: retries,
+      max_escalations: escalations,
+      max_revisions: revisions,
+    },
+  });
+
   return (
     <form
       className="run-form"
       onSubmit={(event) => {
         event.preventDefault();
         if (tooShort || busy) return;
-        void onSubmit({
-          goal: goal.trim(),
-          provider,
-          model_policy: modelPolicy as CreateRunInput["model_policy"],
-          limits: {
-            max_budget_usd: budget,
-            max_agent_calls: calls,
-            max_retries: retries,
-            max_escalations: escalations,
-            max_revisions: revisions,
-          },
-        });
+        void onSubmit(buildInput());
       }}
     >
       <label className="field">
@@ -174,9 +178,20 @@ export function RunForm({
         </div>
       )}
 
-      <button className="primary" type="submit" disabled={busy || tooShort}>
-        {busy ? "Dispatching…" : "Run orchestration"}
-      </button>
+      <div className="form-actions">
+        <button className="primary" type="submit" disabled={busy || tooShort}>
+          {busy ? "Dispatching…" : "Run orchestration"}
+        </button>
+        <button
+          className="secondary"
+          type="button"
+          disabled={busy || tooShort}
+          onClick={() => void onCompare(buildInput())}
+          title="Run the same goal under fixed-fast, adaptive, and role-routed policies"
+        >
+          Compare policies
+        </button>
+      </div>
       {!openaiConfigured && (
         <p className="hint">
           No model endpoint is configured, so runs use the deterministic demo

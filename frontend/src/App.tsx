@@ -1,16 +1,27 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { PolicyCompare } from "./components/PolicyCompare";
+import { ProviderPanel } from "./components/ProviderPanel";
 import { RunDetail } from "./components/RunDetail";
 import { RunForm } from "./components/RunForm";
 import { RunList } from "./components/RunList";
-import type { AppConfig, CreateRunInput, RunDetail as RunDetailData, RunRecord } from "./types";
+import type {
+  AppConfig,
+  ComparisonState,
+  CreateRunInput,
+  RunDetail as RunDetailData,
+  RunRecord,
+} from "./types";
 import { isTerminal } from "./types";
+
+const COMPARISON_POLICIES = ["fast_only", "adaptive", "role_routed"] as const;
 
 export default function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<RunDetailData | null>(null);
+  const [comparison, setComparison] = useState<ComparisonState | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -79,6 +90,7 @@ export default function App() {
         created.run,
         ...current.filter((run) => run.run_id !== created.run.run_id),
       ]);
+      setComparison(null);
       setSelectedId(created.run.run_id);
       setDetail(created);
     } catch (cause) {
@@ -87,6 +99,39 @@ export default function App() {
       setBusy(false);
     }
   }, []);
+
+  const compare = useCallback(async (input: CreateRunInput) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const created: RunRecord[] = [];
+      for (const policy of COMPARISON_POLICIES) {
+        const result = await api.createRun({ ...input, model_policy: policy });
+        created.push(result.run);
+      }
+      setRuns((current) => [
+        ...created,
+        ...current.filter((run) => !created.some((item) => item.run_id === run.run_id)),
+      ]);
+      setComparison({ goal: input.goal, runs: created });
+      setSelectedId(null);
+      setDetail(null);
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const openComparisonRun = useCallback((runId: string) => {
+    setComparison(null);
+    setSelectedId(runId);
+  }, []);
+
+  const closeComparison = useCallback(() => {
+    setComparison(null);
+    setSelectedId((current) => current ?? runs[0]?.run_id ?? null);
+  }, [runs]);
 
   const refresh = useCallback(async () => {
     try {
@@ -126,6 +171,8 @@ export default function App() {
           )}
         </div>
 
+        {config && <ProviderPanel config={config} />}
+
         {config ? (
           <RunForm
             caps={config.caps}
@@ -134,6 +181,7 @@ export default function App() {
             escalationAvailable={config.escalation_available}
             busy={busy}
             onSubmit={submit}
+            onCompare={compare}
           />
         ) : (
           <p className="muted small">Connecting to the API…</p>
@@ -147,11 +195,26 @@ export default function App() {
             refresh
           </button>
         </div>
-        <RunList runs={runs} selectedId={selectedId} onSelect={setSelectedId} />
+        <RunList
+          runs={runs}
+          selectedId={selectedId}
+          onSelect={(runId) => {
+            setComparison(null);
+            setSelectedId(runId);
+          }}
+        />
       </aside>
 
       <main className="main">
-        {detail ? (
+        {comparison && config ? (
+          <PolicyCompare
+            goal={comparison.goal}
+            runs={comparison.runs}
+            config={config}
+            onSelectRun={openComparisonRun}
+            onClose={closeComparison}
+          />
+        ) : detail ? (
           <RunDetail detail={detail} />
         ) : (
           <div className="empty">

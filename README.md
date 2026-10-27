@@ -177,7 +177,18 @@ uvicorn app.main:app
 # http://localhost:8000
 ```
 
-The dashboard shows run status, dependency waves, agent invocations, routing decisions, verification evidence, errors, resource meters, the actual provider kind, and the model used by each role. Demo runs are labelled as fixtures.
+The dashboard shows run status, dependency waves, agent invocations, routing decisions, verification
+evidence, errors, resource meters, the actual provider kind, and the model used by each role. Demo runs are
+labelled as fixtures. It also provides:
+
+- **Provider status** - configured profiles, role routing, pricing state, and a model-list check
+  against the endpoint. The check lists models only; it never runs inference.
+- **Compare policies** - runs the same goal under `fast_only`, `adaptive`, and `role_routed`,
+  then shows status, verification, calls, retries, escalations, revision rounds, duration,
+  tokens and cost side by side. It warns when escalation is inert and never declares a winner.
+  This starts three independent runs, so with a priced provider total spend can be up to
+  three times a single run.
+- **Download trace JSON** - the complete run record and every trace event for offline review.
 
 ## How autonomy is bounded
 

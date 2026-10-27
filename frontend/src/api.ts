@@ -1,4 +1,10 @@
-import type { AppConfig, CreateRunInput, RunDetail, RunRecord } from "./types";
+import type {
+  AppConfig,
+  CreateRunInput,
+  ProviderModelsResult,
+  RunDetail,
+  RunRecord,
+} from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -32,4 +38,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+
+  providerModels: () => request<ProviderModelsResult>("/api/provider/models"),
 };

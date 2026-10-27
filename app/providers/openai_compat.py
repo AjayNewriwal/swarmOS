@@ -87,8 +87,10 @@ class OpenAICompatibleProvider:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
-    def _client(self) -> httpx.AsyncClient:
-        kwargs: dict[str, Any] = {"timeout": self.timeout_seconds}
+    def _client(self, timeout_seconds: int | None = None) -> httpx.AsyncClient:
+        kwargs: dict[str, Any] = {
+            "timeout": timeout_seconds or self.timeout_seconds
+        }
         if self._transport is not None:
             kwargs["transport"] = self._transport
         return httpx.AsyncClient(**kwargs)
@@ -186,8 +188,10 @@ class OpenAICompatibleProvider:
     # probe (no inference, no cost)
     # ------------------------------------------------------------------
     async def health(self) -> dict[str, object]:
+        # A readiness check should fail fast; do not inherit a 90s inference
+        # timeout for listing models.
         try:
-            async with self._client() as client:
+            async with self._client(min(self.timeout_seconds, 10)) as client:
                 response = await client.get(self.models_endpoint, headers=self._headers())
         except httpx.TimeoutException:
             return {"ok": False, "detail": "timed out listing models", "models": []}

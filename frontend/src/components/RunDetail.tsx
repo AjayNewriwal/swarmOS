@@ -46,8 +46,48 @@ function percent(value: number, max: number): number {
   return Math.max(0, Math.min(100, (value / max) * 100));
 }
 
+interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  available: boolean;
+  retries: number;
+}
+
+function usageTotals(events: TraceEvent[]): UsageTotals {
+  const invocations = events
+    .filter((event) => event.kind === "agent_invocation")
+    .map((event) => event.payload as Record<string, any>);
+  return {
+    inputTokens: invocations.reduce(
+      (total, item) => total + Number(item.input_tokens ?? 0),
+      0,
+    ),
+    outputTokens: invocations.reduce(
+      (total, item) => total + Number(item.output_tokens ?? 0),
+      0,
+    ),
+    available: invocations.some((item) => Boolean(item.usage_available)),
+    retries: invocations.filter((item) => Number(item.attempt ?? 1) > 1).length,
+  };
+}
+
+function downloadTrace(detail: RunDetailData): void {
+  const blob = new Blob([JSON.stringify(detail, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `swarmos-${detail.run.run_id}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 export function RunDetail({ detail }: { detail: RunDetailData }) {
   const run = detail.run;
+  const usage = usageTotals(detail.events);
   const planWaves = run.plan ? waves(run.plan.steps) : [];
   const states = stepStates(detail.events);
   const budgetPct = percent(run.cost_usd, run.limits.max_budget_usd);
@@ -134,6 +174,13 @@ export function RunDetail({ detail }: { detail: RunDetailData }) {
             {run.usage_available
               ? "token usage reported"
               : "token usage unavailable"}
+          </span>
+          <span className="chip-static">retries: {usage.retries}</span>
+          <span className={`chip-static ${usage.available ? "ok" : ""}`}>
+            tokens:{" "}
+            {usage.available
+              ? `${usage.inputTokens} in / ${usage.outputTokens} out`
+              : "unavailable"}
           </span>
         </div>
       </section>
@@ -353,7 +400,16 @@ export function RunDetail({ detail }: { detail: RunDetailData }) {
       <section className="panel">
         <div className="panel-head">
           <h2>Trace</h2>
-          <span className="muted">{detail.events.length} events</span>
+          <div className="panel-actions">
+            <span className="muted">{detail.events.length} events</span>
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => downloadTrace(detail)}
+            >
+              download JSON
+            </button>
+          </div>
         </div>
         <div className="trace-scroll">
           <TraceTimeline events={detail.events} />

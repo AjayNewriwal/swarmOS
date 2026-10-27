@@ -1,4 +1,4 @@
-﻿"""Regression tests for the reliability fix behind run_37204d26ec8b.
+"""Regression tests for the reliability fix behind run_37204d26ec8b.
 
 Three behaviours are covered:
 

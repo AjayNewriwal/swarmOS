@@ -152,6 +152,20 @@ export interface CreateRunInput {
   limits: Partial<Limits>;
 }
 
+export interface ProviderModelsResult {
+  provider: string;
+  kind: string;
+  ok: boolean;
+  detail: string;
+  models: string[];
+  warning?: string | null;
+}
+
+export interface ComparisonState {
+  goal: string;
+  runs: RunRecord[];
+}
+
 export const TERMINAL: RunStatus[] = [
   "completed",
   "completed_with_findings",

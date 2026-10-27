@@ -33,7 +33,7 @@ export function RunList({ runs, selectedId, onSelect }: Props) {
             <span className="run-goal">{run.goal}</span>
             <span className="run-meta">
               {run.agent_calls} calls · {run.changed_files.length} files ·{" "}
-              {run.provider}
+              {run.model_policy} · {run.provider}
             </span>
           </button>
         </li>

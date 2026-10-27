@@ -1121,3 +1121,133 @@ button {
     padding: 13px;
   }
 }
+/* --------------------------------------------------------- provider panel */
+.provider-panel {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 8px 11px;
+  font-size: 12px;
+}
+
+.provider-panel > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.provider-facts {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 4px 10px;
+  margin: 10px 0;
+  font-size: 11.5px;
+}
+
+.provider-facts dt {
+  color: var(--muted);
+}
+
+.provider-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.probe-result {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+/* ------------------------------------------------------------------ compare */
+.detail-actions,
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.form-actions .primary {
+  flex: 1;
+}
+
+.secondary {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 9px 12px;
+  font-weight: 550;
+}
+
+.secondary:hover {
+  border-color: rgba(94, 234, 212, 0.5);
+  color: var(--accent);
+}
+
+.secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.secondary.small {
+  padding: 5px 9px;
+  font-size: 11.5px;
+}
+
+.compare-wrap {
+  overflow-x: auto;
+}
+
+.compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.compare-table th {
+  text-align: left;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-weight: 500;
+  padding: 0 10px 8px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.compare-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid rgba(34, 48, 68, 0.55);
+  vertical-align: top;
+}
+
+.compare-table tr:last-child td {
+  border-bottom: none;
+}
+
+.policy-name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.policy-models {
+  margin-top: 2px;
+  max-width: 260px;
+  white-space: normal;
+}
+
+@media (max-width: 720px) {
+  .compare-table {
+    min-width: 760px;
+  }
+}
